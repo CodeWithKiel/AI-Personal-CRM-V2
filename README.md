@@ -1,6 +1,6 @@
 # HumanLoop
 
-HumanLoop is a simple AI-ready personal CRM for remembering the details that make relationships meaningful. It includes contact management, meeting notes with AI summaries, follow-up suggestions, reminders, birthdays, and relationship health scores.
+HumanLoop is a multi-user AI personal CRM for remembering the details that make relationships meaningful. It includes private accounts, contact management, meeting notes with AI summaries, follow-up suggestions, reminders, birthdays, relationship health scores, and a persistent AI agent that can manage CRM records.
 
 ## Stack
 
@@ -36,7 +36,7 @@ The API automatically creates the configured database and tables at startup. The
 | --- | --- | --- |
 | `PORT` | `5000` | Express API port |
 | `CLIENT_URL` | `http://localhost:5173` | Allowed CORS origin |
-| `APP_PASSWORD` | none | Required private workspace password, minimum 12 characters |
+| `APP_URL` | current server URL | Public frontend URL used in password-reset links |
 | `SESSION_SECRET` | none | Required random value of at least 32 characters used to sign sessions |
 | `COOKIE_SECURE` | `false` locally | Keep `true` on HTTPS production deployments |
 | `MYSQL_HOST` | `localhost` | MySQL host |
@@ -51,6 +51,8 @@ The API automatically creates the configured database and tables at startup. The
 | `XAI_MODEL` | `grok-3-mini` | Optional xAI model |
 | `OPENAI_API_KEY` | empty | Optional fallback AI provider |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Optional OpenAI fallback model |
+| `RESEND_API_KEY` | empty | Sends forgot-password emails through Resend |
+| `RESET_FROM_EMAIL` | Resend test sender | Verified sender used for password-reset emails |
 
 ## Production
 
@@ -76,13 +78,18 @@ Express serves the compiled React app from `client/dist`. Any host that supports
 4. Enter the requested MySQL and Groq environment variables.
 5. Set `MYSQL_SSL=true` when required by the database provider.
 
-HumanLoop uses a single private workspace login. Set a strong `APP_PASSWORD`; Render generates `SESSION_SECRET` automatically from `render.yaml`.
+HumanLoop supports separate user accounts. Users create an account with their name, email, and password; Render generates `SESSION_SECRET` automatically from `render.yaml`.
 
 The included `Dockerfile` builds the React frontend and runs the production Express server as one web service. The deployment health check is `/api/health`.
 
 ## API overview
 
 - `GET/POST /api/contacts`
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
 - `GET/PUT/DELETE /api/contacts/:id`
 - `POST /api/contacts/:id/notes`
 - `POST /api/contacts/:id/ai/follow-up`
@@ -90,3 +97,5 @@ The included `Dockerfile` builds the React frontend and runs the production Expr
 - `POST /api/reminders`
 - `PATCH /api/reminders/:id`
 - `GET /api/dashboard`
+- `POST /api/ai/chat`
+- `GET/DELETE /api/ai/chat`

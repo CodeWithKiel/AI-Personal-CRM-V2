@@ -70,6 +70,19 @@ async function askAI(instructions, input) {
   }
 }
 
+function parseJSON(value) {
+  if (!value) return null;
+  const cleaned = value.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { return null; }
+  }
+}
+
 export async function summarizeNote(content) {
   const result = await askAI(
     "Summarize CRM meeting notes in 2 concise sentences. Include commitments and next steps. Return plain text.",
@@ -107,4 +120,55 @@ export async function highlightContact(contact, notes = []) {
     contact.birthday && `Birthday is ${new Date(`${contact.birthday}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric" })}`,
     contact.notes
   ].filter(Boolean).slice(0, 3);
+}
+
+export async function chatWithCRM(message, history = [], context = {}) {
+  const safeHistory = history.slice(-8).map(({ role, content }) => ({
+    role: role === "assistant" ? "assistant" : "user",
+    content: String(content).slice(0, 1200)
+  }));
+  const crmContext = JSON.stringify(context).slice(0, 14000);
+  const result = await askAI(
+    `You are HumanLoop, a concise personal relationship assistant. Use only the supplied CRM context when stating facts about people. Help with follow-ups, remembering details, prioritizing relationships, and drafting thoughtful messages. If the context does not contain an answer, say so. CRM context: ${crmContext}`,
+    [...safeHistory, { role: "user", content: String(message).slice(0, 2000) }]
+      .map((item) => `${item.role}: ${item.content}`)
+      .join("\n")
+  );
+  return result || "I could not reach the AI service just now. Your CRM data is still safe, and you can try again shortly.";
+}
+
+export async function planCRMTask(message, history = [], context = {}) {
+  const safeHistory = history.slice(-12).map(({ role, content }) => ({
+    role: role === "assistant" ? "assistant" : "user",
+    content: String(content).slice(0, 1600)
+  }));
+  const crmContext = JSON.stringify(context).slice(0, 50000);
+  const result = await askAI(
+    `You are the action planner for HumanLoop CRM. Today is ${new Date().toISOString().slice(0, 10)}.
+Use the supplied CRM data to answer questions or perform requested tasks.
+Return ONLY valid JSON with this shape:
+{"reply":"short response","action":{"type":"none|add_contact|update_contact|delete_contact|add_reminder|complete_reminder|add_note","data":{}}}
+Action data:
+add_contact: name required; optional email, phone, birthday YYYY-MM-DD, company, notes.
+update_contact: contact_id required plus only fields to change.
+delete_contact: contact_id required. Use only when the user explicitly asks to delete.
+add_reminder: contact_id, title, due_date YYYY-MM-DD required; reason optional.
+complete_reminder: reminder_id required.
+add_note: contact_id and content required; meeting_date optional YYYY-MM-DD.
+Use type none for questions, drafting, summaries, ambiguity, or missing required information. Never invent IDs or facts. CRM data: ${crmContext}`,
+    [...safeHistory, { role: "user", content: String(message).slice(0, 2400) }]
+      .map((item) => `${item.role}: ${item.content}`)
+      .join("\n")
+  );
+  const plan = parseJSON(result);
+  if (!plan || typeof plan.reply !== "string" || !plan.action || typeof plan.action.type !== "string") {
+    return {
+      reply: result || "I could not reach the AI service just now. Please try again shortly.",
+      action: { type: "none", data: {} }
+    };
+  }
+  return {
+    reply: plan.reply.slice(0, 4000),
+    action: { type: plan.action.type, data: plan.action.data || {} }
+  };
 }

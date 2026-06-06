@@ -13,7 +13,14 @@ async function request(path, options = {}) {
 
 export const api = {
   session: () => request("/api/auth/session"),
-  login: (password) => request("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) }),
+  signup: (data) => request("/api/auth/signup", { method: "POST", body: JSON.stringify(data) }),
+  login: (data) => request("/api/auth/login", { method: "POST", body: JSON.stringify(data) }),
+  forgotPassword: (email) => request("/api/auth/forgot-password", {
+    method: "POST", body: JSON.stringify({ email })
+  }),
+  resetPassword: (data) => request("/api/auth/reset-password", {
+    method: "POST", body: JSON.stringify(data)
+  }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
   dashboard: () => request("/api/dashboard"),
   contacts: (search = "") => request(`/api/contacts?search=${encodeURIComponent(search)}`),
@@ -24,6 +31,12 @@ export const api = {
   addNote: (id, data) => request(`/api/contacts/${id}/notes`, { method: "POST", body: JSON.stringify(data) }),
   followUp: (id) => request(`/api/contacts/${id}/ai/follow-up`, { method: "POST" }),
   highlights: (id) => request(`/api/contacts/${id}/ai/highlights`),
+  chat: (message, history = []) => request("/api/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, history })
+  }),
+  chatHistory: () => request("/api/ai/chat"),
+  clearChat: () => request("/api/ai/chat", { method: "DELETE" }),
   createReminder: (data) => request("/api/reminders", { method: "POST", body: JSON.stringify(data) }),
   completeReminder: (id) => request(`/api/reminders/${id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) })
 };

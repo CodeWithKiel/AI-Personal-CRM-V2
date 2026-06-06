@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Bell, Cake, CalendarDays, Check, ChevronLeft, ChevronRight,
   CircleUserRound, Clock3, Mail, Menu, MessageSquareText, Phone,
-  Moon, Plus, Search, Sparkles, Sun, Trash2, UserRound, Users, X
+  Bot, Moon, Plus, Search, Send, Sparkles, Sun, Trash2, UserRound, Users, X
 } from "lucide-react";
 import { api } from "./api";
 
@@ -48,18 +48,44 @@ function Score({ value = 10 }) {
   );
 }
 
-function Login({ onLogin }) {
+function Login({ onAuthenticated }) {
+  const initialResetToken = new URLSearchParams(window.location.search).get("reset") || "";
+  const [mode, setMode] = useState(initialResetToken ? "reset" : "login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetToken, setResetToken] = useState(initialResetToken);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
     setBusy(true);
     setError("");
+    setMessage("");
     try {
-      await api.login(password);
-      onLogin();
+      if (mode === "forgot") {
+        const result = await api.forgotPassword(email);
+        setMessage(result.message);
+        if (result.resetToken) {
+          setResetToken(result.resetToken);
+          setMode("reset");
+        }
+      } else if (mode === "reset") {
+        const result = await api.resetPassword({ token: resetToken, password, confirmPassword });
+        setMessage(result.message);
+        window.history.replaceState({}, "", window.location.pathname);
+        setPassword("");
+        setConfirmPassword("");
+        setMode("login");
+      } else {
+        const result = mode === "signup"
+          ? await api.signup({ name, email, password, confirmPassword })
+          : await api.login({ email, password });
+        onAuthenticated(result.user);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -71,14 +97,99 @@ function Login({ onLogin }) {
     <main className="login-page">
       <form className="login-card" onSubmit={submit}>
         <div className="brand login-brand"><div className="brand-mark"><span /><span /></div><strong>HumanLoop</strong></div>
-        <p className="eyebrow">Private workspace</p>
-        <h1>Welcome back.</h1>
-        <p>Your relationships and notes are protected.</p>
-        <label>Workspace password<input autoFocus type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
+        {["login", "signup"].includes(mode) && <div className="auth-tabs">
+          <button type="button" className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setError(""); }}>Sign in</button>
+          <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setError(""); }}>Create account</button>
+        </div>}
+        <p className="eyebrow">{mode === "signup" ? "Start your private CRM" : mode === "forgot" ? "Account recovery" : mode === "reset" ? "Choose a new password" : "Welcome back"}</p>
+        <h1>{mode === "signup" ? "Create your account." : mode === "forgot" ? "Forgot password?" : mode === "reset" ? "Reset your password." : "Good to see you."}</h1>
+        <p>{mode === "forgot" ? "Enter your account email and we'll prepare a secure reset link." : mode === "reset" ? "Enter the reset code and your new password." : "Each account has its own private contacts, notes, reminders, and AI context."}</p>
+        {mode === "signup" && <label>Your name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} required /></label>}
+        {mode !== "reset" && <label>Email<input autoFocus={mode === "login" || mode === "forgot"} type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>}
+        {mode === "reset" && <label>Reset code<input autoFocus value={resetToken} onChange={(event) => setResetToken(event.target.value)} required /></label>}
+        {!["forgot"].includes(mode) && <label>{mode === "reset" ? "New password" : "Password"}<input type="password" minLength="8" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>}
+        {["signup", "reset"].includes(mode) && <label>Re-enter password<input type="password" minLength="8" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required /></label>}
         {error && <div className="login-error">{error}</div>}
-        <button type="submit" className="button primary" disabled={busy}>{busy ? "Signing in..." : "Sign in"}</button>
+        {message && <div className="login-message">{message}</div>}
+        <button type="submit" className="button primary" disabled={busy}>
+          {busy ? "Please wait..." : mode === "signup" ? "Create account" : mode === "forgot" ? "Continue" : mode === "reset" ? "Reset password" : "Sign in"}
+        </button>
+        {mode === "login" && <button type="button" className="auth-link" onClick={() => { setMode("forgot"); setError(""); setMessage(""); }}>Forgot password?</button>}
+        {["forgot", "reset"].includes(mode) && <button type="button" className="auth-link" onClick={() => { setMode("login"); setError(""); setMessage(""); }}>Back to sign in</button>}
       </form>
     </main>
+  );
+}
+
+function AIChat({ user, onChanged }) {
+  const [open, setOpen] = useState(() => localStorage.getItem("humanloop-chat-open") === "true");
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const greeting = { role: "assistant", content: `Hi ${user?.name?.split(" ")[0] || "there"}. I can answer questions and manage contacts, notes, and reminders for you.` };
+  const [messages, setMessages] = useState([greeting]);
+
+  useEffect(() => {
+    localStorage.setItem("humanloop-chat-open", String(open));
+  }, [open]);
+  useEffect(() => {
+    api.chatHistory()
+      .then((history) => setMessages(history.length ? history : [greeting]))
+      .catch(() => setMessages([greeting]));
+  }, [user?.id]);
+
+  const send = async (event, suggestedMessage) => {
+    event?.preventDefault();
+    const message = (suggestedMessage || input).trim();
+    if (!message || busy) return;
+    setMessages((current) => [...current, { role: "user", content: message }]);
+    setInput("");
+    setBusy(true);
+    try {
+      const result = await api.chat(message);
+      setMessages((current) => [...current, { role: "assistant", content: result.reply }]);
+      if (result.changed) onChanged();
+    } catch (error) {
+      setMessages((current) => [...current, { role: "assistant", content: `I couldn't answer that: ${error.message}` }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearChat = async () => {
+    if (!window.confirm("Clear your saved AI conversation?")) return;
+    await api.clearChat();
+    setMessages([greeting]);
+  };
+
+  return (
+    <div className={`ai-chat ${open ? "open" : ""}`}>
+      {open && <section className="ai-chat-panel" aria-label="HumanLoop AI assistant">
+        <header className="ai-chat-head">
+          <div className="ai-chat-avatar"><Bot size={20} /></div>
+          <div><strong>HumanLoop AI</strong><small>Your personal CRM assistant</small></div>
+          <div className="ai-chat-controls">
+            <button type="button" className="icon-button" onClick={clearChat} aria-label="Clear AI chat" title="Clear conversation"><Trash2 size={16} /></button>
+            <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Close AI chat"><X size={18} /></button>
+          </div>
+        </header>
+        <div className="ai-chat-messages">
+          {messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.content}</div>)}
+          {busy && <div className="chat-message assistant thinking">Thinking...</div>}
+        </div>
+        {messages.length === 1 && <div className="chat-prompts">
+          {["Add Jordan Lee at Acme", "Remind me to call Jordan next Friday", "Who should I follow up with?"].map((prompt) =>
+            <button type="button" key={prompt} onClick={(event) => send(event, prompt)}>{prompt}</button>
+          )}
+        </div>}
+        <form className="ai-chat-form" onSubmit={send}>
+          <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about your relationships..." aria-label="Message HumanLoop AI" />
+          <button type="submit" disabled={busy || !input.trim()} aria-label="Send message"><Send size={17} /></button>
+        </form>
+      </section>}
+      <button type="button" className="ai-chat-toggle" onClick={() => setOpen(!open)} aria-label={open ? "Close AI assistant" : "Open AI assistant"}>
+        {open ? <X size={22} /> : <><Bot size={22} /><span>Ask AI</span></>}
+      </button>
+    </div>
   );
 }
 
@@ -244,6 +355,7 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [dashboard, setDashboard] = useState({ counts: {}, birthdays: [], reminders: [], reminderHistory: [], calendarEvents: [] });
   const [search, setSearch] = useState("");
@@ -260,7 +372,10 @@ export default function App() {
 
   useEffect(() => {
     api.session()
-      .then((result) => setAuthenticated(result.authenticated))
+      .then((result) => {
+        setAuthenticated(result.authenticated);
+        setCurrentUser(result.user || null);
+      })
       .catch(() => setAuthenticated(false));
   }, []);
   useEffect(() => {
@@ -365,7 +480,7 @@ export default function App() {
   const changeMonth = (offset) => setCalendarMonth((date) => new Date(date.getFullYear(), date.getMonth() + offset, 1));
 
   if (authenticated === null) return <div className="app-loading">Opening HumanLoop...</div>;
-  if (!authenticated) return <Login onLogin={() => setAuthenticated(true)} />;
+  if (!authenticated) return <Login onAuthenticated={(user) => { setCurrentUser(user); setAuthenticated(true); }} />;
 
   return (
     <div className="app-shell" data-theme={theme}>
@@ -378,9 +493,9 @@ export default function App() {
           <button type="button" className={activeView === "birthdays" ? "active" : ""} onClick={() => goTo("birthdays")}><Cake size={19} /> Birthdays <span>{dashboard.birthdays.length}</span></button>
         </nav>
         <div className="sidebar-foot">
-          <div className="user-avatar">P</div>
-          <div><strong>Your workspace</strong><small>Personal CRM</small></div>
-          <button type="button" className="logout-button" onClick={async () => { await api.logout(); setAuthenticated(false); }}>Sign out</button>
+          <div className="user-avatar">{initials(currentUser?.name)}</div>
+          <div><strong>{currentUser?.name || "Your workspace"}</strong></div>
+          <button type="button" className="logout-button" onClick={async () => { await api.logout(); setCurrentUser(null); setAuthenticated(false); }}>Sign out</button>
         </div>
       </aside>
 
@@ -508,6 +623,7 @@ export default function App() {
         <div className="modal"><button type="button" className="icon-button modal-close" onClick={() => setShowForm(false)} aria-label="Close add contact form"><X /></button><p className="eyebrow">Grow your circle</p><h2>Add someone new</h2><p className="modal-intro">Start with what you know. You can always add more later.</p><ContactForm onSubmit={createContact} onClose={() => setShowForm(false)} saving={saving} /></div>
       </div>}
       {selected && <ContactPanel contactId={selected} onClose={() => setSelected(null)} onChanged={load} notify={notify} />}
+      <AIChat user={currentUser} onChanged={load} />
       {toast && <div className={`toast ${toast.type === "error" ? "error" : ""}`} role="status">{toast.message}</div>}
     </div>
   );

@@ -37,8 +37,19 @@ export async function initializeDatabase() {
   });
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      name VARCHAR(120) NOT NULL,
+      email VARCHAR(190) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS contacts (
       id INT PRIMARY KEY AUTO_INCREMENT,
+      user_id INT,
       name VARCHAR(120) NOT NULL,
       email VARCHAR(190),
       phone VARCHAR(50),
@@ -46,9 +57,25 @@ export async function initializeDatabase() {
       company VARCHAR(150),
       notes TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+  try {
+    await pool.query("ALTER TABLE contacts ADD COLUMN user_id INT NULL AFTER id");
+  } catch (error) {
+    if (error.code !== "ER_DUP_FIELDNAME") throw error;
+  }
+  try {
+    await pool.query("ALTER TABLE contacts ADD INDEX idx_contacts_user_id (user_id)");
+  } catch (error) {
+    if (error.code !== "ER_DUP_KEYNAME") throw error;
+  }
+  try {
+    await pool.query("ALTER TABLE contacts ADD CONSTRAINT fk_contacts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE");
+  } catch (error) {
+    if (!["ER_FK_DUP_NAME", "ER_DUP_KEYNAME"].includes(error.code)) throw error;
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS meeting_notes (
       id INT PRIMARY KEY AUTO_INCREMENT,
@@ -78,6 +105,29 @@ export async function initializeDatabase() {
   } catch (error) {
     if (error.code !== "ER_DUP_FIELDNAME") throw error;
   }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      user_id INT NOT NULL,
+      role ENUM('user', 'assistant') NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_chat_messages_user (user_id, id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      user_id INT NOT NULL,
+      token_hash CHAR(64) NOT NULL UNIQUE,
+      expires_at DATETIME NOT NULL,
+      used_at DATETIME,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_password_reset_user (user_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
 }
 
 export function db() {

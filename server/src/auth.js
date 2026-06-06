@@ -1,14 +1,12 @@
 import crypto from "node:crypto";
+import { promisify } from "node:util";
 
 const COOKIE_NAME = "humanloop_session";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const scrypt = promisify(crypto.scrypt);
 
 function secret() {
   return process.env.SESSION_SECRET?.trim();
-}
-
-function configuredPassword() {
-  return process.env.APP_PASSWORD?.trim();
 }
 
 function secureCookie() {
@@ -34,19 +32,39 @@ function parseCookies(header = "") {
 }
 
 export function validateAuthConfig() {
-  if (!configuredPassword() || configuredPassword().length < 12) {
-    throw new Error("APP_PASSWORD must be at least 12 characters.");
+  if (!secret() || secret().length < 32) {
+    throw new Error("SESSION_SECRET must be at least 32 characters.");
   }
-  if (!secret() || secret().length < 32) throw new Error("SESSION_SECRET must be at least 32 characters.");
 }
 
-export function verifyPassword(password) {
-  return safeEqual(password, configuredPassword());
+export async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = await scrypt(password, salt, 64);
+  return `${salt}:${Buffer.from(derived).toString("hex")}`;
 }
 
-export function createSessionCookie() {
+export async function verifyPassword(password, storedHash) {
+  const [salt, expected] = (storedHash || "").split(":");
+  if (!salt || !expected) return false;
+  const derived = await scrypt(password, salt, 64);
+  return safeEqual(Buffer.from(derived).toString("hex"), expected);
+}
+
+export function createPasswordResetToken() {
+  const token = crypto.randomBytes(32).toString("base64url");
+  return {
+    token,
+    hash: crypto.createHash("sha256").update(token).digest("hex")
+  };
+}
+
+export function hashPasswordResetToken(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+export function createSessionCookie(userId) {
   const expires = Date.now() + MAX_AGE_SECONDS * 1000;
-  const payload = `${expires}.${crypto.randomBytes(16).toString("hex")}`;
+  const payload = `${expires}.${userId}.${crypto.randomBytes(16).toString("hex")}`;
   const token = `${payload}.${sign(payload)}`;
   const secure = secureCookie() ? "; Secure" : "";
   return `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${MAX_AGE_SECONDS}${secure}`;
@@ -57,16 +75,20 @@ export function clearSessionCookie() {
   return `${COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`;
 }
 
-export function isAuthenticated(req) {
+export function getSessionUserId(req) {
   const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
-  if (!token) return false;
+  if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 3) return false;
-  const payload = `${parts[0]}.${parts[1]}`;
-  return Number(parts[0]) > Date.now() && safeEqual(parts[2], sign(payload));
+  if (parts.length !== 4) return null;
+  const payload = `${parts[0]}.${parts[1]}.${parts[2]}`;
+  if (Number(parts[0]) <= Date.now() || !safeEqual(parts[3], sign(payload))) return null;
+  const userId = Number(parts[1]);
+  return Number.isInteger(userId) ? userId : null;
 }
 
 export function requireAuth(req, res, next) {
-  if (isAuthenticated(req)) return next();
-  res.status(401).json({ message: "Authentication required" });
+  const userId = getSessionUserId(req);
+  if (!userId) return res.status(401).json({ message: "Authentication required" });
+  req.userId = userId;
+  next();
 }
