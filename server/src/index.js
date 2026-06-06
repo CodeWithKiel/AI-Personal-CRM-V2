@@ -26,6 +26,11 @@ const scoreSql = `
   LEAST(100, GREATEST(10,
     100 - LEAST(70, DATEDIFF(CURDATE(), COALESCE(MAX(n.meeting_date), c.created_at)) * 1.4)
     + LEAST(30, COUNT(n.id) * 6)
+    - COALESCE((
+      SELECT SUM(GREATEST(0, DATEDIFF(CURDATE(), r.due_date)) * 10)
+      FROM reminders r
+      WHERE r.contact_id = c.id AND r.status = 'pending'
+    ), 0)
   ))
 `;
 
@@ -71,6 +76,7 @@ app.get("/api/dashboard", async (_req, res, next) => {
       SELECT
         (SELECT COUNT(*) FROM contacts) contacts,
         (SELECT COUNT(*) FROM reminders WHERE status = 'pending' AND due_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)) upcoming,
+        (SELECT COUNT(*) FROM reminders WHERE status = 'pending' AND due_date < CURDATE()) overdue,
         (SELECT COUNT(*) FROM meeting_notes WHERE meeting_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)) interactions
     `);
     const [birthdays] = await db().query(`
@@ -86,7 +92,28 @@ app.get("/api/dashboard", async (_req, res, next) => {
       WHERE r.status = 'pending'
       ORDER BY r.due_date ASC LIMIT 8
     `);
-    res.json({ counts, birthdays, reminders });
+    const [reminderHistory] = await db().query(`
+      SELECT r.*, c.name contact_name, c.company
+      FROM reminders r JOIN contacts c ON c.id = r.contact_id
+      WHERE r.status = 'completed'
+      ORDER BY COALESCE(r.completed_at, r.created_at) DESC LIMIT 10
+    `);
+    const [calendarEvents] = await db().query(`
+      SELECT 'reminder' type, r.id, r.contact_id, r.title, r.due_date event_date, c.name contact_name
+      FROM reminders r JOIN contacts c ON c.id = r.contact_id
+      WHERE r.status = 'pending'
+      UNION ALL
+      SELECT 'birthday' type, c.id, c.id contact_id, CONCAT(c.name, "'s birthday") title, c.birthday event_date, c.name contact_name
+      FROM contacts c
+      WHERE c.birthday IS NOT NULL
+      UNION ALL
+      SELECT 'meeting' type, n.id, n.contact_id, 'Meeting notes' title, DATE(n.meeting_date) event_date, c.name contact_name
+      FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id
+      WHERE n.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      ORDER BY event_date ASC
+      LIMIT 80
+    `);
+    res.json({ counts, birthdays, reminders, reminderHistory, calendarEvents });
   } catch (error) { next(error); }
 });
 
@@ -209,7 +236,8 @@ app.patch("/api/reminders/:id", async (req, res, next) => {
     if (!["pending", "completed"].includes(req.body.status)) {
       return res.status(400).json({ message: "Invalid reminder status" });
     }
-    const [result] = await db().query("UPDATE reminders SET status = ? WHERE id = ?", [req.body.status, req.params.id]);
+    const completedAtSql = req.body.status === "completed" ? "NOW()" : "NULL";
+    const [result] = await db().query(`UPDATE reminders SET status = ?, completed_at = ${completedAtSql} WHERE id = ?`, [req.body.status, req.params.id]);
     if (!result.affectedRows) return res.status(404).json({ message: "Reminder not found" });
     res.json({ message: "Reminder updated" });
   } catch (error) { next(error); }

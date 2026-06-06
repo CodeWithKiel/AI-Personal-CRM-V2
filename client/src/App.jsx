@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Bell, Cake, CalendarDays, Check, ChevronRight,
+  Bell, Cake, CalendarDays, Check, ChevronLeft, ChevronRight,
   CircleUserRound, Clock3, Mail, Menu, MessageSquareText, Phone,
-  Plus, Search, Sparkles, Trash2, UserRound, Users, X
+  Moon, Plus, Search, Sparkles, Sun, Trash2, UserRound, Users, X
 } from "lucide-react";
 import { api } from "./api";
 
@@ -27,6 +27,15 @@ function daysUntil(date) {
   birthday.setFullYear(today.getFullYear());
   if (birthday < new Date(today.toDateString())) birthday.setFullYear(today.getFullYear() + 1);
   return Math.ceil((birthday - new Date(today.toDateString())) / 86400000);
+}
+
+function dateKey(value) {
+  if (!value) return "";
+  return value.slice(0, 10);
+}
+
+function monthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function Score({ value = 10 }) {
@@ -236,7 +245,7 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
 export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
   const [contacts, setContacts] = useState([]);
-  const [dashboard, setDashboard] = useState({ counts: {}, birthdays: [], reminders: [] });
+  const [dashboard, setDashboard] = useState({ counts: {}, birthdays: [], reminders: [], reminderHistory: [], calendarEvents: [] });
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -244,19 +253,27 @@ export default function App() {
   const [error, setError] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState(null);
+  const [activeView, setActiveView] = useState("home");
+  const [theme, setTheme] = useState(() => localStorage.getItem("humanloop-theme") || "light");
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [showScheduleHighlights, setShowScheduleHighlights] = useState(false);
 
   useEffect(() => {
     api.session()
       .then((result) => setAuthenticated(result.authenticated))
       .catch(() => setAuthenticated(false));
   }, []);
+  useEffect(() => {
+    localStorage.setItem("humanloop-theme", theme);
+  }, [theme]);
 
   const notify = (message, type = "success") => {
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 3500);
   };
-  const goTo = (id) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goTo = (view) => {
+    setActiveView(view);
+    window.scrollTo({ top: 0, behavior: "smooth" });
     setMobileNav(false);
   };
 
@@ -309,18 +326,56 @@ export default function App() {
   };
   const averageScore = useMemo(() => contacts.length ? Math.round(contacts.reduce((sum, c) => sum + Number(c.relationship_score), 0) / contacts.length) : 0, [contacts]);
   const today = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
+  const viewTitles = {
+    home: ["Good morning.", "Here's who could use a little attention today."],
+    people: ["Your Circle", "Browse and update the people in your loop."],
+    reminders: ["Stay Thoughtful", "Keep track of the moments that need a follow-up."],
+    birthdays: ["Worth Celebrating", "See upcoming birthdays at a glance."]
+  };
+  const [title, subtitle] = viewTitles[activeView];
+  const calendarEvents = useMemo(() => {
+    const events = dashboard.calendarEvents || [];
+    const currentMonth = monthKey(calendarMonth);
+    return events
+      .map((event) => {
+        const rawDate = dateKey(event.event_date);
+        const eventDate = event.type === "birthday" && rawDate
+          ? `${calendarMonth.getFullYear()}-${rawDate.slice(5)}`
+          : rawDate;
+        return { ...event, eventDate };
+      })
+      .filter((event) => event.eventDate.startsWith(currentMonth));
+  }, [dashboard.calendarEvents, calendarMonth]);
+  const calendarEventsByDay = useMemo(() => calendarEvents.reduce((groups, event) => {
+    groups[event.eventDate] = [...(groups[event.eventDate] || []), event];
+    return groups;
+  }, {}), [calendarEvents]);
+  const calendarDays = useMemo(() => {
+    const start = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const end = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
+    const leading = start.getDay();
+    return Array.from({ length: leading + end.getDate() }, (_, index) => {
+      const day = index - leading + 1;
+      if (day < 1) return null;
+      const date = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      return { day, key, events: calendarEventsByDay[key] || [] };
+    });
+  }, [calendarMonth, calendarEventsByDay]);
+  const changeMonth = (offset) => setCalendarMonth((date) => new Date(date.getFullYear(), date.getMonth() + offset, 1));
 
   if (authenticated === null) return <div className="app-loading">Opening HumanLoop...</div>;
   if (!authenticated) return <Login onLogin={() => setAuthenticated(true)} />;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme}>
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
         <div className="brand"><div className="brand-mark"><span /><span /></div><strong>HumanLoop</strong></div>
         <nav>
-          <button type="button" className="active" onClick={() => goTo("home")}><CircleUserRound size={19} /> Home</button>
-          <button type="button" onClick={() => goTo("people")}><Users size={19} /> People <span>{contacts.length}</span></button>
-          <button type="button" onClick={() => goTo("reminders")}><Bell size={19} /> Reminders <span>{dashboard.counts.upcoming || 0}</span></button>
+          <button type="button" className={activeView === "home" ? "active" : ""} onClick={() => goTo("home")}><CircleUserRound size={19} /> Home</button>
+          <button type="button" className={activeView === "people" ? "active" : ""} onClick={() => goTo("people")}><Users size={19} /> People <span>{contacts.length}</span></button>
+          <button type="button" className={activeView === "reminders" ? "active" : ""} onClick={() => goTo("reminders")}><Bell size={19} /> Reminders <span>{dashboard.counts.upcoming || 0}</span></button>
+          <button type="button" className={activeView === "birthdays" ? "active" : ""} onClick={() => goTo("birthdays")}><Cake size={19} /> Birthdays <span>{dashboard.birthdays.length}</span></button>
         </nav>
         <div className="sidebar-foot">
           <div className="user-avatar">P</div>
@@ -334,22 +389,33 @@ export default function App() {
           <button type="button" className="icon-button menu-button" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle navigation"><Menu /></button>
           <div>
             <p className="eyebrow">{today}</p>
-            <h1>Good morning.</h1>
-            <p>Here's who could use a little attention today.</p>
+            <h1>{title}</h1>
+            <p>{subtitle}</p>
           </div>
-          <button type="button" className="button primary add-button" onClick={() => setShowForm(true)}><Plus size={18} /> Add person</button>
+          <div className="header-actions">
+            <button
+              type="button"
+              className="icon-button theme-toggle"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            >
+              {theme === "dark" ? <Sun size={19} /> : <Moon size={19} />}
+            </button>
+            <button type="button" className="button primary add-button" onClick={() => setShowForm(true)}><Plus size={18} /> Add person</button>
+          </div>
         </header>
 
         {error && <div className="error-banner"><strong>HumanLoop couldn't complete that request.</strong> {error}</div>}
 
-        <section className="stats">
+        {activeView === "home" && <section className="stats">
           <div><span className="stat-icon green"><Users /></span><p>People in your loop</p><strong>{dashboard.counts.contacts || 0}</strong><small>Keep the circle meaningful</small></div>
           <div><span className="stat-icon orange"><Bell /></span><p>Due this week</p><strong>{dashboard.counts.upcoming || 0}</strong><small>Thoughtful moments ahead</small></div>
           <div><span className="stat-icon blue"><MessageSquareText /></span><p>Recent interactions</p><strong>{dashboard.counts.interactions || 0}</strong><small>Over the last 30 days</small></div>
-          <div><span className="stat-icon rose"><Sparkles /></span><p>Relationship health</p><strong>{averageScore || "—"}</strong><small>{averageScore >= 70 ? "Your network is thriving" : "A few check-ins will help"}</small></div>
-        </section>
+          <div><span className="stat-icon rose"><Sparkles /></span><p>Relationship health</p><strong>{averageScore || "-"}</strong><small>{dashboard.counts.overdue ? `${dashboard.counts.overdue} missed item${dashboard.counts.overdue === 1 ? "" : "s"}: -10/day` : averageScore >= 70 ? "Your network is thriving" : "A few check-ins will help"}</small></div>
+        </section>}
 
-        <div className="content-grid">
+        <div className={`content-grid dashboard-view ${activeView}-view`}>
           <section className="card people-card" id="people">
             <div className="card-head">
               <div><p className="eyebrow">Your circle</p><h2>People</h2></div>
@@ -372,13 +438,52 @@ export default function App() {
 
           <aside className="right-column">
             <section className="card reminders-card" id="reminders">
-              <div className="card-head"><div><p className="eyebrow">Stay thoughtful</p><h2>Upcoming</h2></div><CalendarDays size={20} /></div>
+              <div className="card-head">
+                <div><p className="eyebrow">Stay thoughtful</p><h2>Upcoming</h2></div>
+                <button
+                  type="button"
+                  className={`icon-button card-icon-button ${showScheduleHighlights ? "active" : ""}`}
+                  onClick={() => setShowScheduleHighlights(!showScheduleHighlights)}
+                  aria-label="Toggle schedule highlights"
+                  title="Toggle schedule highlights"
+                >
+                  <CalendarDays size={20} />
+                </button>
+              </div>
               <div className="reminder-list">
                 {dashboard.reminders.map((item) => <div className="reminder" key={item.id}>
                   <button type="button" className="check-button" onClick={() => complete(item.id)} aria-label={`Complete ${item.title}`}><Check size={14} /></button>
-                  <button type="button" className="reminder-copy" onClick={() => setSelected(item.contact_id)}><strong>{item.title}</strong><span>{item.contact_name} · {prettyDate(item.due_date)}</span></button>
+                  <button type="button" className="reminder-copy" onClick={() => setSelected(item.contact_id)}><strong>{item.title}</strong><span>{item.contact_name} - {prettyDate(item.due_date)}</span></button>
                 </div>)}
                 {!dashboard.reminders.length && <div className="empty-small">You're all caught up. Nicely done.</div>}
+              </div>
+              {showScheduleHighlights && <div className="card-schedule">
+                <div className="card-schedule-head">
+                  <button type="button" className="icon-button" onClick={() => changeMonth(-1)} aria-label="Previous month"><ChevronLeft size={16} /></button>
+                  <strong>{calendarMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</strong>
+                  <button type="button" className="icon-button" onClick={() => changeMonth(1)} aria-label="Next month"><ChevronRight size={16} /></button>
+                </div>
+                <div className="mini-calendar">
+                  {calendarDays.map((day, index) => day ? <button type="button" className={`mini-day ${day.events.length ? "has-events" : ""}`} key={day.key}>
+                    <span>{day.day}</span>
+                    {!!day.events.length && <em>{day.events.length}</em>}
+                  </button> : <div className="mini-day empty" key={`card-empty-${index}`} />)}
+                </div>
+                <div className="schedule-list">
+                  {calendarEvents.slice(0, 5).map((event) => <button type="button" key={`${event.type}-${event.id}-${event.eventDate}`} onClick={() => setSelected(event.contact_id)}>
+                    <span className={`event-dot ${event.type}`} />
+                    <div><strong>{event.type === "meeting" ? "Meetup" : event.type}</strong><small>{event.title} - {prettyDate(event.eventDate)}</small></div>
+                  </button>)}
+                  {!calendarEvents.length && <div className="empty-small">Scheduled meetings, meetups, reminders, and birthdays will highlight here.</div>}
+                </div>
+              </div>}
+              <div className="reminder-history">
+                <div className="history-title"><Clock3 size={14} /><strong>History</strong></div>
+                {dashboard.reminderHistory.map((item) => <button type="button" className="history-row" key={item.id} onClick={() => setSelected(item.contact_id)}>
+                  <span>{item.title}</span>
+                  <small>{item.contact_name} - completed {prettyDate(item.completed_at || item.created_at)}</small>
+                </button>)}
+                {!dashboard.reminderHistory.length && <div className="empty-small">Completed reminders will show here.</div>}
               </div>
             </section>
             <section className="card birthday-card">
@@ -388,7 +493,7 @@ export default function App() {
                 <div><strong>{person.name}</strong><span>{prettyDate(person.birthday)}</span></div>
                 <em>{daysUntil(person.birthday) === 0 ? "Today" : `${daysUntil(person.birthday)}d`}</em>
               </button>)}
-              {!dashboard.birthdays.length && <div className="empty-small">Add birthdays to see them here.</div>}
+              {!dashboard.birthdays.length && <div className="empty-small birthday-empty">No birthdays yet. Add one to a contact profile to see it here.</div>}
             </section>
             <section className="nudge-card">
               <Sparkles size={22} />
@@ -396,6 +501,7 @@ export default function App() {
             </section>
           </aside>
         </div>
+
       </main>
 
       {showForm && <div className="modal-wrap" onMouseDown={(e) => e.target === e.currentTarget && setShowForm(false)}>

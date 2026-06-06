@@ -68,10 +68,16 @@ export async function initializeDatabase() {
       due_date DATE NOT NULL,
       reason VARCHAR(255),
       status ENUM('pending', 'completed') DEFAULT 'pending',
+      completed_at DATETIME,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
     )
   `);
+  try {
+    await pool.query("ALTER TABLE reminders ADD COLUMN completed_at DATETIME");
+  } catch (error) {
+    if (error.code !== "ER_DUP_FIELDNAME") throw error;
+  }
 }
 
 export function db() {
