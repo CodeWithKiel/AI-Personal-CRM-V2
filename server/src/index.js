@@ -1,13 +1,17 @@
 import dotenv from "dotenv";
+import compression from "compression";
 import cors from "cors";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { initializeDatabase, db } from "./db.js";
+import { authenticator } from "otplib";
+import QRCode from "qrcode";
+import { closeDatabase, initializeDatabase, db } from "./db.js";
 import { generateFollowUp, getAIConfig, highlightContact, planCRMTask, summarizeNote } from "./ai.js";
 import {
-  clearSessionCookie, createPasswordResetToken, createSessionCookie, getSessionUserId,
-  hashPassword, hashPasswordResetToken, requireAuth, validateAuthConfig, verifyPassword
+  clearSessionCookie, createPasswordResetToken, createSessionCookie, decryptSecret,
+  encryptSecret, getSessionUserId, hashPassword, hashPasswordResetToken, requireAuth,
+  validateAuthConfig, verifyPassword
 } from "./auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,11 +20,22 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 const app = express();
 const port = Number(process.env.PORT || 5000);
 const loginAttempts = new Map();
+const appVersion = "2.0.0";
+let server;
+const loginAttemptCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [key, attempt] of loginAttempts) {
+    if (!attempt.blockedUntil || attempt.blockedUntil <= now) loginAttempts.delete(key);
+  }
+}, 15 * 60 * 1000);
+loginAttemptCleanup.unref();
 app.disable("x-powered-by");
+app.set("trust proxy", 1);
+app.use(compression());
 if (process.env.NODE_ENV !== "production") {
   app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
 }
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "10mb" }));
 
 const scoreSql = `
   LEAST(100, GREATEST(10,
@@ -63,6 +78,17 @@ app.post("/api/auth/signup", async (req, res, next) => {
     next(error);
   }
 });
+
+async function recordLogin(req, { userId = null, email = null, status }) {
+  try {
+    await db().query(`
+      INSERT INTO login_activity (user_id, email, ip_address, user_agent, status)
+      VALUES (?, ?, ?, ?, ?)
+    `, [userId, email, req.ip, String(req.get("user-agent") || "").slice(0, 500), status]);
+  } catch (error) {
+    console.error("Could not record login activity:", error.message);
+  }
+}
 
 async function sendPasswordResetEmail(email, name, token, req) {
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
@@ -141,18 +167,35 @@ app.post("/api/auth/login", async (req, res, next) => {
   }
   try {
     const email = req.body.email?.trim().toLowerCase();
-    const [[user]] = await db().query("SELECT id, name, email, password_hash FROM users WHERE email = ?", [email]);
+    const [[user]] = await db().query(`
+      SELECT id, name, email, phone, password_hash, two_factor_secret, two_factor_enabled
+      FROM users WHERE email = ?
+    `, [email]);
     if (!user || !(await verifyPassword(req.body.password || "", user.password_hash))) {
       const failures = (attempt?.failures || 0) + 1;
       loginAttempts.set(key, {
         failures,
         blockedUntil: failures >= 5 ? now + 15 * 60 * 1000 : 0
       });
+      await recordLogin(req, { userId: user?.id, email, status: "failed" });
       return res.status(401).json({ message: "Incorrect email or password" });
     }
+    if (user.two_factor_enabled) {
+      const token = String(req.body.twoFactorToken || "").replace(/\s/g, "");
+      if (!token) {
+        await recordLogin(req, { userId: user.id, email, status: "2fa_required" });
+        return res.json({ authenticated: false, requiresTwoFactor: true });
+      }
+      const secret = decryptSecret(user.two_factor_secret);
+      if (!secret || !authenticator.check(token, secret)) {
+        await recordLogin(req, { userId: user.id, email, status: "failed" });
+        return res.status(401).json({ message: "Invalid authentication code" });
+      }
+    }
     loginAttempts.delete(key);
+    await recordLogin(req, { userId: user.id, email, status: "success" });
     res.setHeader("Set-Cookie", createSessionCookie(user.id));
-    res.json({ authenticated: true, user: { id: user.id, name: user.name, email: user.email } });
+    res.json({ authenticated: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, twoFactorEnabled: Boolean(user.two_factor_enabled) } });
   } catch (error) {
     next(error);
   }
@@ -167,43 +210,319 @@ app.get("/api/auth/session", async (req, res, next) => {
   try {
     const userId = getSessionUserId(req);
     if (!userId) return res.json({ authenticated: false, user: null });
-    const [[user]] = await db().query("SELECT id, name, email FROM users WHERE id = ?", [userId]);
+    const [[user]] = await db().query(`
+      SELECT id, name, email, phone, two_factor_enabled
+      FROM users WHERE id = ?
+    `, [userId]);
     if (!user) return res.json({ authenticated: false, user: null });
-    res.json({ authenticated: true, user });
+    res.json({ authenticated: true, user: { ...user, twoFactorEnabled: Boolean(user.two_factor_enabled) } });
   } catch (error) { next(error); }
 });
 
 app.use("/api", requireAuth);
 
+app.get("/api/settings", async (req, res, next) => {
+  try {
+    const [[user]] = await db().query(`
+      SELECT id, name, email, phone, two_factor_enabled, created_at
+      FROM users WHERE id = ?
+    `, [req.userId]);
+    res.json({ ...user, twoFactorEnabled: Boolean(user.two_factor_enabled), version: appVersion });
+  } catch (error) { next(error); }
+});
+
+app.put("/api/settings/profile", async (req, res, next) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const phone = String(req.body.phone || "").trim() || null;
+    if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "Name and a valid email are required" });
+    }
+    await db().query("UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?", [name, email, phone, req.userId]);
+    res.json({ user: { id: req.userId, name, email, phone } });
+  } catch (error) {
+    if (error.code === "ER_DUP_ENTRY") return res.status(409).json({ message: "That email is already in use" });
+    next(error);
+  }
+});
+
+app.post("/api/settings/change-password", async (req, res, next) => {
+  try {
+    const [[user]] = await db().query("SELECT password_hash FROM users WHERE id = ?", [req.userId]);
+    if (!(await verifyPassword(req.body.currentPassword || "", user.password_hash))) {
+      return res.status(401).json({ message: "Current password is incorrect" });
+    }
+    const password = req.body.newPassword || "";
+    if (password.length < 8) return res.status(400).json({ message: "New password must be at least 8 characters" });
+    if (password !== req.body.confirmPassword) return res.status(400).json({ message: "Passwords do not match" });
+    await db().query("UPDATE users SET password_hash = ? WHERE id = ?", [await hashPassword(password), req.userId]);
+    res.json({ message: "Password changed successfully" });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/settings/2fa/setup", async (req, res, next) => {
+  try {
+    const [[user]] = await db().query("SELECT email FROM users WHERE id = ?", [req.userId]);
+    const secret = authenticator.generateSecret();
+    const otpauth = authenticator.keyuri(user.email, "HumanLoop", secret);
+    await db().query("UPDATE users SET two_factor_secret = ?, two_factor_enabled = FALSE WHERE id = ?", [encryptSecret(secret), req.userId]);
+    res.json({ secret, qrCode: await QRCode.toDataURL(otpauth) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/settings/2fa/enable", async (req, res, next) => {
+  try {
+    const [[user]] = await db().query("SELECT two_factor_secret FROM users WHERE id = ?", [req.userId]);
+    const secret = decryptSecret(user.two_factor_secret);
+    if (!secret || !authenticator.check(String(req.body.token || "").replace(/\s/g, ""), secret)) {
+      return res.status(400).json({ message: "Invalid authentication code" });
+    }
+    await db().query("UPDATE users SET two_factor_enabled = TRUE WHERE id = ?", [req.userId]);
+    res.json({ message: "Two-factor authentication enabled" });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/settings/2fa/disable", async (req, res, next) => {
+  try {
+    const [[user]] = await db().query("SELECT password_hash, two_factor_secret FROM users WHERE id = ?", [req.userId]);
+    if (!(await verifyPassword(req.body.password || "", user.password_hash))) {
+      return res.status(401).json({ message: "Password is incorrect" });
+    }
+    const secret = decryptSecret(user.two_factor_secret);
+    if (!secret || !authenticator.check(String(req.body.token || "").replace(/\s/g, ""), secret)) {
+      return res.status(400).json({ message: "Invalid authentication code" });
+    }
+    await db().query("UPDATE users SET two_factor_enabled = FALSE, two_factor_secret = NULL WHERE id = ?", [req.userId]);
+    res.json({ message: "Two-factor authentication disabled" });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/settings/login-activity", async (req, res, next) => {
+  try {
+    const [rows] = await db().query(`
+      SELECT id, ip_address, user_agent, status, created_at
+      FROM login_activity WHERE user_id = ? ORDER BY created_at DESC LIMIT 30
+    `, [req.userId]);
+    res.json(rows);
+  } catch (error) { next(error); }
+});
+
+app.delete("/api/settings/account", async (req, res, next) => {
+  try {
+    const [[user]] = await db().query("SELECT password_hash FROM users WHERE id = ?", [req.userId]);
+    if (!(await verifyPassword(req.body.password || "", user.password_hash))) {
+      return res.status(401).json({ message: "Password is incorrect" });
+    }
+    await db().query("DELETE FROM login_activity WHERE user_id = ?", [req.userId]);
+    await db().query("DELETE FROM users WHERE id = ?", [req.userId]);
+    res.setHeader("Set-Cookie", clearSessionCookie());
+    res.status(204).end();
+  } catch (error) { next(error); }
+});
+
+function normalizeImportedContact(row) {
+  const source = Object.fromEntries(Object.entries(row || {}).map(([key, value]) => [
+    String(key).trim().toLowerCase().replace(/[\s_-]+/g, ""),
+    value
+  ]));
+  return {
+    name: String(source.name || source.fullname || "").trim(),
+    email: String(source.email || "").trim() || null,
+    phone: String(source.phone || source.phonenumber || "").trim() || null,
+    birthday: source.birthday ? String(source.birthday).slice(0, 10) : null,
+    company: String(source.company || "").trim() || null,
+    notes: String(source.notes || source.note || "").trim() || null
+  };
+}
+
+async function getBackup(userId) {
+  const [[contacts], [meetingNotes], [reminders], [chatMessages]] = await Promise.all([
+    db().query("SELECT id, name, email, phone, birthday, company, notes FROM contacts WHERE user_id = ? ORDER BY id", [userId]),
+    db().query(`
+      SELECT n.contact_id, n.content, n.summary, n.meeting_date
+      FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id
+      WHERE c.user_id = ? ORDER BY n.id
+    `, [userId]),
+    db().query(`
+      SELECT r.contact_id, r.title, r.due_date, r.reason, r.status, r.completed_at
+      FROM reminders r JOIN contacts c ON c.id = r.contact_id
+      WHERE c.user_id = ? ORDER BY r.id
+    `, [userId]),
+    db().query("SELECT role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY id", [userId])
+  ]);
+  const groupByContact = (rows) => rows.reduce((groups, row) => {
+    const group = groups.get(row.contact_id) || [];
+    group.push(row);
+    groups.set(row.contact_id, group);
+    return groups;
+  }, new Map());
+  const notesByContact = groupByContact(meetingNotes);
+  const remindersByContact = groupByContact(reminders);
+  return {
+    version: appVersion,
+    exportedAt: new Date().toISOString(),
+    contacts: contacts.map(({ id, ...contact }) => ({
+      ...contact,
+      meetingNotes: (notesByContact.get(id) || []).map(({ contact_id, ...note }) => note),
+      reminders: (remindersByContact.get(id) || []).map(({ contact_id, ...reminder }) => reminder)
+    })),
+    chatMessages
+  };
+}
+
+app.post("/api/settings/import-contacts", async (req, res, next) => {
+  const contacts = Array.isArray(req.body.contacts) ? req.body.contacts.slice(0, 5000) : [];
+  if (!contacts.length) return res.status(400).json({ message: "No contacts were found in that file" });
+  const connection = await db().getConnection();
+  try {
+    await connection.beginTransaction();
+    const validContacts = [];
+    let skipped = 0;
+    for (const row of contacts) {
+      const contact = normalizeImportedContact(row);
+      if (!contact.name || (contact.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email))) {
+        skipped += 1;
+        continue;
+      }
+      validContacts.push(contact);
+    }
+    for (let offset = 0; offset < validContacts.length; offset += 250) {
+      const chunk = validContacts.slice(offset, offset + 250);
+      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const values = chunk.flatMap((contact) => [
+        req.userId, contact.name, contact.email, contact.phone,
+        contact.birthday, contact.company, contact.notes
+      ]);
+      await connection.query(`
+        INSERT INTO contacts (user_id, name, email, phone, birthday, company, notes)
+        VALUES ${placeholders}
+      `, values);
+    }
+    await connection.commit();
+    res.json({ imported: validContacts.length, skipped });
+  } catch (error) {
+    await connection.rollback();
+    next(error);
+  } finally {
+    connection.release();
+  }
+});
+
+app.get("/api/settings/export", async (req, res, next) => {
+  try { res.json(await getBackup(req.userId)); }
+  catch (error) { next(error); }
+});
+
+app.post("/api/settings/restore", async (req, res, next) => {
+  const backup = req.body.backup;
+  const replace = req.body.mode === "replace";
+  if (!backup || !Array.isArray(backup.contacts)) return res.status(400).json({ message: "Invalid HumanLoop backup file" });
+  const connection = await db().getConnection();
+  try {
+    await connection.beginTransaction();
+    if (replace) {
+      await connection.query("DELETE FROM contacts WHERE user_id = ?", [req.userId]);
+      await connection.query("DELETE FROM chat_messages WHERE user_id = ?", [req.userId]);
+    }
+    for (const raw of backup.contacts.slice(0, 5000)) {
+      const contact = normalizeImportedContact(raw);
+      if (!contact.name) continue;
+      const [result] = await connection.query(`
+        INSERT INTO contacts (user_id, name, email, phone, birthday, company, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [req.userId, contact.name, contact.email, contact.phone, contact.birthday, contact.company, contact.notes]);
+      for (const note of Array.isArray(raw.meetingNotes) ? raw.meetingNotes : []) {
+        if (!note.content) continue;
+        await connection.query(`
+          INSERT INTO meeting_notes (contact_id, content, summary, meeting_date) VALUES (?, ?, ?, ?)
+        `, [result.insertId, note.content, note.summary || null, note.meeting_date || new Date()]);
+      }
+      for (const reminder of Array.isArray(raw.reminders) ? raw.reminders : []) {
+        if (!reminder.title || !reminder.due_date) continue;
+        await connection.query(`
+          INSERT INTO reminders (contact_id, title, due_date, reason, status, completed_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [result.insertId, reminder.title, reminder.due_date, reminder.reason || null, reminder.status === "completed" ? "completed" : "pending", reminder.completed_at || null]);
+      }
+    }
+    for (const message of Array.isArray(backup.chatMessages) ? backup.chatMessages.slice(-1000) : []) {
+      if (!["user", "assistant"].includes(message.role) || !message.content) continue;
+      await connection.query(`
+        INSERT INTO chat_messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)
+      `, [req.userId, message.role, message.content, message.created_at || new Date()]);
+    }
+    await connection.commit();
+    res.json({ message: replace ? "Backup restored and existing CRM data replaced" : "Backup merged into your CRM" });
+  } catch (error) {
+    await connection.rollback();
+    next(error);
+  } finally {
+    connection.release();
+  }
+});
+
+app.get("/api/settings/storage", async (req, res, next) => {
+  try {
+    const [[usage]] = await db().query(`
+      SELECT
+        (SELECT COUNT(*) FROM contacts WHERE user_id = ?) contacts,
+        (SELECT COUNT(*) FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id WHERE c.user_id = ?) notes,
+        (SELECT COUNT(*) FROM reminders r JOIN contacts c ON c.id = r.contact_id WHERE c.user_id = ?) reminders,
+        (SELECT COUNT(*) FROM chat_messages WHERE user_id = ?) messages,
+        (
+          SELECT COALESCE(SUM(
+            OCTET_LENGTH(COALESCE(name, '')) + OCTET_LENGTH(COALESCE(email, '')) +
+            OCTET_LENGTH(COALESCE(phone, '')) + OCTET_LENGTH(COALESCE(company, '')) +
+            OCTET_LENGTH(COALESCE(notes, ''))
+          ), 0) FROM contacts WHERE user_id = ?
+        ) +
+        (
+          SELECT COALESCE(SUM(OCTET_LENGTH(content) + OCTET_LENGTH(COALESCE(summary, ''))), 0)
+          FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id WHERE c.user_id = ?
+        ) +
+        (
+          SELECT COALESCE(SUM(OCTET_LENGTH(title) + OCTET_LENGTH(COALESCE(reason, ''))), 0)
+          FROM reminders r JOIN contacts c ON c.id = r.contact_id WHERE c.user_id = ?
+        ) +
+        (
+          SELECT COALESCE(SUM(OCTET_LENGTH(content)), 0) FROM chat_messages WHERE user_id = ?
+        ) bytes
+    `, Array(8).fill(req.userId));
+    res.json(usage);
+  } catch (error) { next(error); }
+});
+
 app.get("/api/dashboard", async (req, res, next) => {
   try {
-    const [[counts]] = await db().query(`
+    const [countsResult, birthdaysResult, remindersResult, historyResult, eventsResult] = await Promise.all([
+      db().query(`
       SELECT
         (SELECT COUNT(*) FROM contacts WHERE user_id = ?) contacts,
         (SELECT COUNT(*) FROM reminders r JOIN contacts c ON c.id = r.contact_id WHERE c.user_id = ? AND r.status = 'pending' AND r.due_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)) upcoming,
         (SELECT COUNT(*) FROM reminders r JOIN contacts c ON c.id = r.contact_id WHERE c.user_id = ? AND r.status = 'pending' AND r.due_date < CURDATE()) overdue,
         (SELECT COUNT(*) FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id WHERE c.user_id = ? AND n.meeting_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)) interactions
-    `, [req.userId, req.userId, req.userId, req.userId]);
-    const [birthdays] = await db().query(`
+    `, [req.userId, req.userId, req.userId, req.userId]),
+      db().query(`
       SELECT id, name, birthday, company
       FROM contacts
       WHERE user_id = ? AND birthday IS NOT NULL
       ORDER BY MOD(DAYOFYEAR(birthday) - DAYOFYEAR(CURDATE()) + 366, 366)
       LIMIT 4
-    `, [req.userId]);
-    const [reminders] = await db().query(`
+    `, [req.userId]),
+      db().query(`
       SELECT r.*, c.name contact_name, c.company
       FROM reminders r JOIN contacts c ON c.id = r.contact_id
       WHERE c.user_id = ? AND r.status = 'pending'
       ORDER BY r.due_date ASC LIMIT 8
-    `, [req.userId]);
-    const [reminderHistory] = await db().query(`
+    `, [req.userId]),
+      db().query(`
       SELECT r.*, c.name contact_name, c.company
       FROM reminders r JOIN contacts c ON c.id = r.contact_id
       WHERE c.user_id = ? AND r.status = 'completed'
       ORDER BY COALESCE(r.completed_at, r.created_at) DESC LIMIT 10
-    `, [req.userId]);
-    const [calendarEvents] = await db().query(`
+    `, [req.userId]),
+      db().query(`
       SELECT 'reminder' type, r.id, r.contact_id, r.title, r.due_date event_date, c.name contact_name
       FROM reminders r JOIN contacts c ON c.id = r.contact_id
       WHERE c.user_id = ? AND r.status = 'pending'
@@ -217,7 +536,13 @@ app.get("/api/dashboard", async (req, res, next) => {
       WHERE c.user_id = ? AND n.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       ORDER BY event_date ASC
       LIMIT 80
-    `, [req.userId, req.userId, req.userId]);
+    `, [req.userId, req.userId, req.userId])
+    ]);
+    const [[counts]] = countsResult;
+    const [birthdays] = birthdaysResult;
+    const [reminders] = remindersResult;
+    const [reminderHistory] = historyResult;
+    const [calendarEvents] = eventsResult;
     res.json({ counts, birthdays, reminders, reminderHistory, calendarEvents });
   } catch (error) { next(error); }
 });
@@ -246,8 +571,10 @@ app.get("/api/contacts/:id", async (req, res, next) => {
       WHERE c.id = ? AND c.user_id = ? GROUP BY c.id
     `, [req.params.id, req.userId]);
     if (!contact) return res.status(404).json({ message: "Contact not found" });
-    const [notes] = await db().query("SELECT * FROM meeting_notes WHERE contact_id = ? ORDER BY meeting_date DESC", [req.params.id]);
-    const [reminders] = await db().query("SELECT * FROM reminders WHERE contact_id = ? ORDER BY due_date", [req.params.id]);
+    const [[notes], [reminders]] = await Promise.all([
+      db().query("SELECT * FROM meeting_notes WHERE contact_id = ? ORDER BY meeting_date DESC", [req.params.id]),
+      db().query("SELECT * FROM reminders WHERE contact_id = ? ORDER BY due_date", [req.params.id])
+    ]);
     res.json({ ...contact, meeting_notes: notes, reminders });
   } catch (error) { next(error); }
 });
@@ -361,8 +688,10 @@ app.patch("/api/reminders/:id", async (req, res, next) => {
 app.get("/api/ai/chat", async (req, res, next) => {
   try {
     const [messages] = await db().query(`
-      SELECT id, role, content, created_at
-      FROM chat_messages WHERE user_id = ? ORDER BY id ASC
+      SELECT id, role, content, created_at FROM (
+        SELECT id, role, content, created_at
+        FROM chat_messages WHERE user_id = ? ORDER BY id DESC LIMIT 200
+      ) recent_messages ORDER BY id ASC
     `, [req.userId]);
     res.json(messages);
   } catch (error) { next(error); }
@@ -460,24 +789,30 @@ app.post("/api/ai/chat", async (req, res, next) => {
     const message = req.body.message?.trim();
     if (!message) return res.status(400).json({ message: "Message is required" });
     await db().query("INSERT INTO chat_messages (user_id, role, content) VALUES (?, 'user', ?)", [req.userId, message]);
-    const [contacts] = await db().query(`
+    const [contactsResult, notesResult, remindersResult, historyResult] = await Promise.all([
+      db().query(`
       SELECT id, name, email, phone, birthday, company, notes, created_at, updated_at
       FROM contacts WHERE user_id = ? ORDER BY name
-    `, [req.userId]);
-    const [recentNotes] = await db().query(`
+    `, [req.userId]),
+      db().query(`
       SELECT n.id, n.contact_id, c.name contact_name, n.summary, n.content, n.meeting_date
       FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id
       WHERE c.user_id = ? ORDER BY n.meeting_date DESC
-    `, [req.userId]);
-    const [reminders] = await db().query(`
+    `, [req.userId]),
+      db().query(`
       SELECT r.id, r.contact_id, c.name contact_name, r.title, r.due_date, r.reason, r.status
       FROM reminders r JOIN contacts c ON c.id = r.contact_id
       WHERE c.user_id = ? ORDER BY r.due_date
-    `, [req.userId]);
-    const [history] = await db().query(`
+    `, [req.userId]),
+      db().query(`
       SELECT role, content FROM chat_messages
       WHERE user_id = ? ORDER BY id DESC LIMIT 14
-    `, [req.userId]);
+    `, [req.userId])
+    ]);
+    const [contacts] = contactsResult;
+    const [recentNotes] = notesResult;
+    const [reminders] = remindersResult;
+    const [history] = historyResult;
     const plan = await planCRMTask(message, history.reverse().slice(0, -1), { contacts, meetingNotes: recentNotes, reminders });
     let result = { changed: false };
     let reply = plan.reply;
@@ -495,7 +830,13 @@ app.use("/api", (_req, res) => res.status(404).json({ message: "API route not fo
 
 if (process.env.NODE_ENV === "production") {
   const clientDist = path.resolve(__dirname, "../../client/dist");
-  app.use(express.static(clientDist));
+  app.use(express.static(clientDist, {
+    maxAge: "1y",
+    immutable: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith("index.html")) res.setHeader("Cache-Control", "no-cache");
+    }
+  }));
   app.use((_req, res) => res.sendFile(path.join(clientDist, "index.html")));
 }
 
@@ -507,8 +848,24 @@ app.use((error, _req, res, _next) => {
 Promise.resolve()
   .then(validateAuthConfig)
   .then(initializeDatabase)
-  .then(() => app.listen(port, () => console.log(`HumanLoop API running on port ${port}`)))
+  .then(() => {
+    server = app.listen(port, () => console.log(`HumanLoop API running on port ${port}`));
+  })
   .catch((error) => {
     console.error("Could not connect to MySQL:", error.message);
     process.exit(1);
   });
+
+async function shutdown(signal) {
+  console.log(`${signal} received; shutting down HumanLoop.`);
+  const forceExit = setTimeout(() => process.exit(1), 10000);
+  forceExit.unref();
+  if (server) {
+    await new Promise((resolve) => server.close(resolve));
+  }
+  await closeDatabase();
+  process.exit(0);
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));

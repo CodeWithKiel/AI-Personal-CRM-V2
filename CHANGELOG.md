@@ -1,5 +1,81 @@
 # HumanLoop Changelog
 
+## Workspace Cleanup
+
+- Updated the app creator credit to VibeCodersPH.
+- Removed generated QA browser profiles, screenshots, and development logs.
+
+## 2026-06-07 - Version 2.0.0
+
+### Optimized
+
+- Reduced initial JavaScript from about 364 KB to 252 KB by loading CSV and Excel tooling only when requested.
+- Replaced per-contact backup queries with four parallel bulk queries.
+- Parallelized independent dashboard, contact-detail, and AI-context database reads.
+- Changed contact imports to transactional 250-row bulk inserts.
+- Added composite indexes for birthdays, meeting dates, reminder status/dates, and password-reset lookups.
+- Contact search no longer reloads dashboard data on every keystroke and ignores stale search responses.
+- Limited restored chat UI history to the latest 200 messages while retaining full database history.
+- Added automatic cleanup for expired in-memory login rate-limit entries.
+- Added HTTP compression and long-lived caching for hashed production assets.
+- Added MySQL connection keepalive, idle-pool tuning, and graceful shutdown handling.
+- Changed Docker dependency installation to deterministic `npm ci`.
+
+### Performance Verification
+
+- Imported 1,000 contacts in approximately 344 ms.
+- Exported a 1,000-contact backup in approximately 78 ms.
+- Loaded the dashboard for the scale-test account in approximately 26 ms.
+- Built the optimized production Docker image successfully.
+
+### Added
+
+- Settings area for profile name, email, and phone.
+- Password changes with current-password verification.
+- TOTP two-factor authentication with QR setup and login challenges.
+- Login activity and access-attempt history.
+- Permanent account deletion with password confirmation.
+- CSV and Excel contact import.
+- CSV and Excel contact export.
+- Full JSON backup, merge restore, and replace restore.
+- Per-user storage usage counts and estimated size.
+- App version, about, creator, and credits information.
+- Password visibility toggles for authentication forms.
+- Calendar weekday headings.
+
+### Fixed
+
+- Calendar event markers no longer inherit reminder-row sizing and appear as consistent circular dots.
+- Login subtitle now uses a short relationship-focused quote.
+
+### Security
+
+- Two-factor secrets are encrypted at rest with AES-256-GCM using the session secret.
+- Data restore operations use database transactions.
+- Account deletion removes login activity along with all account-owned CRM data.
+- Client and server production dependencies pass `npm audit` with zero known vulnerabilities.
+
+### Verification
+
+- Production frontend build completed successfully.
+- Profile, import, export, storage, 2FA challenge/login, activity history, backup restore, and account deletion passed end-to-end API testing.
+
+### Files Changed
+
+- `CHANGELOG.md` - Recorded the v2 feature, optimization, security, cleanup, and verification notes.
+- `Dockerfile` - Switched production dependency installation to deterministic clean installs.
+- `README.md` - Updated setup, configuration, deployment, authentication, settings, and AI documentation.
+- `package.json` and `package-lock.json` - Updated root scripts and dependency metadata.
+- `client/package.json` and `client/package-lock.json` - Added client import/export dependencies and updated metadata.
+- `client/src/App.jsx` - Added settings, 2FA flows, data management, password visibility, calendar fixes, creator details, and frontend performance improvements.
+- `client/src/api.js` - Added client methods for account settings, security, activity, import/export, backup/restore, storage, and account deletion.
+- `client/src/styles.css` - Added settings, security, data-management, calendar, password, and responsive UI styles.
+- `server/package.json` and `server/package-lock.json` - Added server security, compression, QR, and 2FA dependencies.
+- `server/schema.sql` - Added account settings, 2FA, login activity, reset, and query-performance schema updates.
+- `server/src/auth.js` - Added encrypted 2FA secret handling and authentication security helpers.
+- `server/src/db.js` - Added database pool tuning, schema migrations, indexes, and graceful shutdown support.
+- `server/src/index.js` - Added settings, 2FA, activity, import/export, backup/restore, storage, deletion, and optimized API behavior.
+
 ## 2026-06-07
 
 ### Added

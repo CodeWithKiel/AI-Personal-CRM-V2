@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell, Cake, CalendarDays, Check, ChevronLeft, ChevronRight,
   CircleUserRound, Clock3, Mail, Menu, MessageSquareText, Phone,
-  Bot, Moon, Plus, Search, Send, Sparkles, Sun, Trash2, UserRound, Users, X
+  Bot, Database, Download, Eye, EyeOff, FileUp, LockKeyhole, Moon, Plus,
+  Search, Send, Settings, ShieldCheck, Sparkles, Sun, Trash2, UserRound,
+  Users, X
 } from "lucide-react";
 import { api } from "./api";
 
@@ -55,6 +57,9 @@ function Login({ onAuthenticated }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [twoFactorToken, setTwoFactorToken] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [resetToken, setResetToken] = useState(initialResetToken);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -83,7 +88,11 @@ function Login({ onAuthenticated }) {
       } else {
         const result = mode === "signup"
           ? await api.signup({ name, email, password, confirmPassword })
-          : await api.login({ email, password });
+          : await api.login({ email, password, twoFactorToken });
+        if (result.requiresTwoFactor) {
+          setMode("twoFactor");
+          return;
+        }
         onAuthenticated(result.user);
       }
     } catch (err) {
@@ -101,21 +110,22 @@ function Login({ onAuthenticated }) {
           <button type="button" className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setError(""); }}>Sign in</button>
           <button type="button" className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setError(""); }}>Create account</button>
         </div>}
-        <p className="eyebrow">{mode === "signup" ? "Start your private CRM" : mode === "forgot" ? "Account recovery" : mode === "reset" ? "Choose a new password" : "Welcome back"}</p>
-        <h1>{mode === "signup" ? "Create your account." : mode === "forgot" ? "Forgot password?" : mode === "reset" ? "Reset your password." : "Good to see you."}</h1>
-        <p>{mode === "forgot" ? "Enter your account email and we'll prepare a secure reset link." : mode === "reset" ? "Enter the reset code and your new password." : "Each account has its own private contacts, notes, reminders, and AI context."}</p>
+        <p className="eyebrow">{mode === "signup" ? "Start your private CRM" : mode === "forgot" ? "Account recovery" : mode === "reset" ? "Choose a new password" : mode === "twoFactor" ? "Security check" : "Welcome back"}</p>
+        <h1>{mode === "signup" ? "Create your account." : mode === "forgot" ? "Forgot password?" : mode === "reset" ? "Reset your password." : mode === "twoFactor" ? "Enter your code." : "Good to see you."}</h1>
+        <p>{mode === "forgot" ? "Enter your account email and we'll prepare a secure reset link." : mode === "reset" ? "Enter the reset code and your new password." : mode === "twoFactor" ? "Enter the six-digit code from your authenticator app." : "\"Remember the people who matter.\""}</p>
         {mode === "signup" && <label>Your name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} required /></label>}
-        {mode !== "reset" && <label>Email<input autoFocus={mode === "login" || mode === "forgot"} type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>}
+        {!["reset", "twoFactor"].includes(mode) && <label>Email<input autoFocus={mode === "login" || mode === "forgot"} type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>}
         {mode === "reset" && <label>Reset code<input autoFocus value={resetToken} onChange={(event) => setResetToken(event.target.value)} required /></label>}
-        {!["forgot"].includes(mode) && <label>{mode === "reset" ? "New password" : "Password"}<input type="password" minLength="8" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>}
-        {["signup", "reset"].includes(mode) && <label>Re-enter password<input type="password" minLength="8" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required /></label>}
+        {!["forgot", "twoFactor"].includes(mode) && <label>{mode === "reset" ? "New password" : "Password"}<span className="password-field"><input type={showPassword ? "text" : "password"} minLength="8" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></span></label>}
+        {["signup", "reset"].includes(mode) && <label>Re-enter password<span className="password-field"><input type={showConfirmPassword ? "text" : "password"} minLength="8" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required /><button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} aria-label={showConfirmPassword ? "Hide password" : "Show password"}>{showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></span></label>}
+        {mode === "twoFactor" && <label>Authentication code<input autoFocus inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={twoFactorToken} onChange={(event) => setTwoFactorToken(event.target.value.replace(/\D/g, ""))} required /></label>}
         {error && <div className="login-error">{error}</div>}
         {message && <div className="login-message">{message}</div>}
         <button type="submit" className="button primary" disabled={busy}>
-          {busy ? "Please wait..." : mode === "signup" ? "Create account" : mode === "forgot" ? "Continue" : mode === "reset" ? "Reset password" : "Sign in"}
+          {busy ? "Please wait..." : mode === "signup" ? "Create account" : mode === "forgot" ? "Continue" : mode === "reset" ? "Reset password" : mode === "twoFactor" ? "Verify and sign in" : "Sign in"}
         </button>
         {mode === "login" && <button type="button" className="auth-link" onClick={() => { setMode("forgot"); setError(""); setMessage(""); }}>Forgot password?</button>}
-        {["forgot", "reset"].includes(mode) && <button type="button" className="auth-link" onClick={() => { setMode("login"); setError(""); setMessage(""); }}>Back to sign in</button>}
+        {["forgot", "reset", "twoFactor"].includes(mode) && <button type="button" className="auth-link" onClick={() => { setMode("login"); setTwoFactorToken(""); setError(""); setMessage(""); }}>Back to sign in</button>}
       </form>
     </main>
   );
@@ -190,6 +200,234 @@ function AIChat({ user, onChanged }) {
         {open ? <X size={22} /> : <><Bot size={22} /><span>Ask AI</span></>}
       </button>
     </div>
+  );
+}
+
+function downloadFile(name, content, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function formatBytes(value = 0) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1048576).toFixed(1)} MB`;
+}
+
+function SettingsPage({ user, onUserChanged, onDataChanged, onDeleted, notify }) {
+  const [settings, setSettings] = useState({ name: user.name, email: user.email, phone: user.phone || "", version: "2.0.0" });
+  const [activity, setActivity] = useState([]);
+  const [storage, setStorage] = useState({});
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [twoFactor, setTwoFactor] = useState(null);
+  const [twoFactorToken, setTwoFactorToken] = useState("");
+  const [disableForm, setDisableForm] = useState({ password: "", token: "" });
+  const [busy, setBusy] = useState(false);
+
+  const loadSettings = async () => {
+    const [account, loginActivity, storageUsage] = await Promise.all([api.settings(), api.loginActivity(), api.storage()]);
+    setSettings(account);
+    setActivity(loginActivity);
+    setStorage(storageUsage);
+  };
+  useEffect(() => { loadSettings().catch((error) => notify(error.message, "error")); }, []);
+
+  const run = async (work, success) => {
+    setBusy(true);
+    try {
+      await work();
+      if (success) notify(success);
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveProfile = (event) => {
+    event.preventDefault();
+    run(async () => {
+      const result = await api.updateProfile(settings);
+      onUserChanged({ ...user, ...result.user });
+      await loadSettings();
+    }, "Profile updated.");
+  };
+
+  const changePassword = (event) => {
+    event.preventDefault();
+    run(async () => {
+      await api.changePassword(passwordForm);
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+    }, "Password changed.");
+  };
+
+  const setupTwoFactor = () => run(async () => setTwoFactor(await api.setupTwoFactor()));
+  const enableTwoFactor = () => run(async () => {
+    await api.enableTwoFactor(twoFactorToken);
+    setTwoFactor(null);
+    setTwoFactorToken("");
+    await loadSettings();
+  }, "Two-factor authentication enabled.");
+  const disableTwoFactor = () => run(async () => {
+    await api.disableTwoFactor(disableForm);
+    setDisableForm({ password: "", token: "" });
+    await loadSettings();
+  }, "Two-factor authentication disabled.");
+
+  const importFile = async (file) => {
+    if (!file) return;
+    let contacts;
+    if (file.name.toLowerCase().endsWith(".csv")) {
+      const { default: Papa } = await import("papaparse");
+      const parsed = await new Promise((resolve, reject) => Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (result) => resolve(result.data),
+        error: reject
+      }));
+      contacts = parsed;
+    } else {
+      const { default: readXlsxFile } = await import("read-excel-file/browser");
+      const rows = await readXlsxFile(file);
+      const headers = (rows[0] || []).map((value) => String(value || ""));
+      contacts = rows.slice(1).map((row) => Object.fromEntries(headers.map((header, index) => [header, row[index]])));
+    }
+    await run(async () => {
+      const result = await api.importContacts(contacts);
+      await Promise.all([loadSettings(), onDataChanged()]);
+      notify(`Imported ${result.imported} contacts${result.skipped ? `; skipped ${result.skipped}` : ""}.`);
+    });
+  };
+
+  const exportBackup = () => run(async () => {
+    const backup = await api.exportData();
+    downloadFile(`humanloop-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2), "application/json");
+  }, "Backup downloaded.");
+
+  const exportContacts = (format) => run(async () => {
+    const backup = await api.exportData();
+    const contacts = backup.contacts.map(({ name, email, phone, birthday, company, notes }) => ({ name, email, phone, birthday, company, notes }));
+    if (format === "csv") {
+      const { default: Papa } = await import("papaparse");
+      downloadFile("humanloop-contacts.csv", Papa.unparse(contacts), "text/csv;charset=utf-8");
+    } else {
+      const { default: writeXlsxFile } = await import("write-excel-file/browser");
+      const schema = [
+        { column: "Name", type: String, value: (row) => row.name || "" },
+        { column: "Email", type: String, value: (row) => row.email || "" },
+        { column: "Phone", type: String, value: (row) => row.phone || "" },
+        { column: "Birthday", type: String, value: (row) => row.birthday || "" },
+        { column: "Company", type: String, value: (row) => row.company || "" },
+        { column: "Notes", type: String, value: (row) => row.notes || "" }
+      ];
+      await writeXlsxFile(contacts, { schema, fileName: "humanloop-contacts.xlsx" });
+    }
+  }, `Contacts exported as ${format.toUpperCase()}.`);
+
+  const restoreBackup = async (file) => {
+    if (!file) return;
+    try {
+      const backup = JSON.parse(await file.text());
+      const replace = window.confirm("Replace existing CRM data? Choose Cancel to merge this backup instead.");
+      await run(async () => {
+        await api.restoreData(backup, replace ? "replace" : "merge");
+        await Promise.all([loadSettings(), onDataChanged()]);
+      }, "Backup restored.");
+    } catch (error) {
+      notify(error.message === "Unexpected token" ? "That is not a valid HumanLoop backup." : error.message, "error");
+    }
+  };
+
+  const deleteAccount = () => {
+    const password = window.prompt("Enter your password to permanently delete your account:");
+    if (!password || !window.confirm("This permanently deletes your account and all CRM data. Continue?")) return;
+    run(async () => {
+      await api.deleteAccount(password);
+      onDeleted();
+    });
+  };
+
+  return (
+    <section className="settings-page">
+      <div className="settings-section-head"><p className="eyebrow">Personalize and protect</p><h2>Account Settings</h2></div>
+      <div className="settings-grid">
+        <form className="settings-card" onSubmit={saveProfile}>
+          <div className="settings-card-title"><CircleUserRound /><div><h3>Profile information</h3><p>Update the details associated with your account.</p></div></div>
+          <label>Name<input value={settings.name || ""} onChange={(event) => setSettings({ ...settings, name: event.target.value })} required /></label>
+          <label>Email<input type="email" value={settings.email || ""} onChange={(event) => setSettings({ ...settings, email: event.target.value })} required /></label>
+          <label>Phone<input value={settings.phone || ""} onChange={(event) => setSettings({ ...settings, phone: event.target.value })} /></label>
+          <button className="button primary" disabled={busy}>Save profile</button>
+        </form>
+
+        <form className="settings-card" onSubmit={changePassword}>
+          <div className="settings-card-title"><LockKeyhole /><div><h3>Change password</h3><p>Use at least eight characters.</p></div></div>
+          <label>Current password<input type="password" value={passwordForm.currentPassword} onChange={(event) => setPasswordForm({ ...passwordForm, currentPassword: event.target.value })} required /></label>
+          <label>New password<input type="password" minLength="8" value={passwordForm.newPassword} onChange={(event) => setPasswordForm({ ...passwordForm, newPassword: event.target.value })} required /></label>
+          <label>Re-enter new password<input type="password" minLength="8" value={passwordForm.confirmPassword} onChange={(event) => setPasswordForm({ ...passwordForm, confirmPassword: event.target.value })} required /></label>
+          <button className="button primary" disabled={busy}>Change password</button>
+        </form>
+
+        <div className="settings-card">
+          <div className="settings-card-title"><ShieldCheck /><div><h3>Two-factor authentication</h3><p>Add an authenticator app code to every login.</p></div></div>
+          <span className={`status-pill ${settings.twoFactorEnabled ? "enabled" : ""}`}>{settings.twoFactorEnabled ? "Enabled" : "Disabled"}</span>
+          {!settings.twoFactorEnabled && !twoFactor && <button type="button" className="button primary" disabled={busy} onClick={setupTwoFactor}>Set up 2FA</button>}
+          {twoFactor && <div className="two-factor-setup">
+            <img src={twoFactor.qrCode} alt="Two-factor authentication QR code" />
+            <p>Scan this code with your authenticator app, or enter:</p><code>{twoFactor.secret}</code>
+            <input inputMode="numeric" placeholder="6-digit code" value={twoFactorToken} onChange={(event) => setTwoFactorToken(event.target.value.replace(/\D/g, ""))} />
+            <button type="button" className="button primary" onClick={enableTwoFactor}>Verify and enable</button>
+          </div>}
+          {settings.twoFactorEnabled && <div className="disable-2fa">
+            <input type="password" placeholder="Current password" value={disableForm.password} onChange={(event) => setDisableForm({ ...disableForm, password: event.target.value })} />
+            <input inputMode="numeric" placeholder="6-digit code" value={disableForm.token} onChange={(event) => setDisableForm({ ...disableForm, token: event.target.value.replace(/\D/g, "") })} />
+            <button type="button" className="button ghost danger" onClick={disableTwoFactor}>Disable 2FA</button>
+          </div>}
+        </div>
+
+        <div className="settings-card activity-card">
+          <div className="settings-card-title"><Clock3 /><div><h3>Login activity</h3><p>Your latest account access attempts.</p></div></div>
+          <div className="activity-list">{activity.map((item) => <div key={item.id}>
+            <span className={`activity-status ${item.status}`} />
+            <div><strong>{item.status.replace("_", " ")}</strong><small>{prettyDate(item.created_at, { year: true })} · {item.ip_address || "Unknown IP"}</small></div>
+          </div>)}{!activity.length && <p className="muted-copy">No login activity recorded yet.</p>}</div>
+        </div>
+      </div>
+
+      <div className="settings-section-head"><p className="eyebrow">Your information</p><h2>Data Management</h2></div>
+      <div className="settings-grid">
+        <div className="settings-card">
+          <div className="settings-card-title"><FileUp /><div><h3>Import contacts</h3><p>Upload CSV or Excel with name, email, phone, birthday, company, and notes columns.</p></div></div>
+          <label className="file-button button ghost">Choose CSV or Excel<input type="file" accept=".csv,.xlsx,.xls" onChange={(event) => importFile(event.target.files[0])} /></label>
+        </div>
+        <div className="settings-card">
+          <div className="settings-card-title"><Download /><div><h3>Export data</h3><p>Download a portable contact list.</p></div></div>
+          <div className="button-row"><button type="button" className="button ghost" onClick={() => exportContacts("csv")}>CSV</button><button type="button" className="button ghost" onClick={() => exportContacts("xlsx")}>Excel</button></div>
+        </div>
+        <div className="settings-card">
+          <div className="settings-card-title"><Database /><div><h3>Backup & restore</h3><p>JSON backups preserve contacts, notes, reminders, and chat history.</p></div></div>
+          <div className="button-row"><button type="button" className="button ghost" onClick={exportBackup}>Download backup</button><label className="file-button button ghost">Restore backup<input type="file" accept=".json" onChange={(event) => restoreBackup(event.target.files[0])} /></label></div>
+        </div>
+        <div className="settings-card storage-card">
+          <div className="settings-card-title"><Database /><div><h3>Storage usage</h3><p>Approximate text stored in your CRM.</p></div></div>
+          <strong className="storage-total">{formatBytes(Number(storage.bytes || 0))}</strong>
+          <div className="storage-breakdown"><span>{storage.contacts || 0} contacts</span><span>{storage.notes || 0} notes</span><span>{storage.reminders || 0} reminders</span><span>{storage.messages || 0} chat messages</span></div>
+        </div>
+      </div>
+
+      <div className="settings-section-head"><p className="eyebrow">Product details</p><h2>About App</h2></div>
+      <div className="settings-grid about-grid">
+        <div className="settings-card"><h3>Version</h3><p>HumanLoop v{settings.version || "2.0.0"}</p></div>
+        <div className="settings-card"><h3>About</h3><p>A private AI personal CRM for remembering details and nurturing relationships.</p></div>
+        <div className="settings-card"><h3>Created by</h3><p>VibeCodersPH</p></div>
+        <div className="settings-card"><h3>Credits</h3><p>React, Express, MySQL, Lucide, Groq, OpenAI-compatible APIs, and the open-source community.</p></div>
+      </div>
+
+      <div className="danger-zone"><div><h3>Delete account</h3><p>Permanently remove your account and all associated data.</p></div><button type="button" className="button danger" onClick={deleteAccount}>Delete account</button></div>
+    </section>
   );
 }
 
@@ -369,6 +607,7 @@ export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem("humanloop-theme") || "light");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [showScheduleHighlights, setShowScheduleHighlights] = useState(false);
+  const searchRequest = useRef(0);
 
   useEffect(() => {
     api.session()
@@ -400,9 +639,27 @@ export default function App() {
   };
   useEffect(() => {
     if (!authenticated) return undefined;
-    const timer = setTimeout(load, 180);
-    return () => clearTimeout(timer);
+    const requestId = ++searchRequest.current;
+    const timer = setTimeout(() => {
+      api.contacts(search)
+        .then((contactData) => {
+          if (requestId !== searchRequest.current) return;
+          setContacts(contactData);
+          setError("");
+        })
+        .catch((err) => setError(err.message));
+    }, 180);
+    return () => {
+      clearTimeout(timer);
+      if (requestId === searchRequest.current) searchRequest.current += 1;
+    };
   }, [search, authenticated]);
+  useEffect(() => {
+    if (!authenticated) return;
+    api.dashboard()
+      .then((dashboardData) => { setDashboard(dashboardData); setError(""); })
+      .catch((err) => setError(err.message));
+  }, [authenticated]);
 
   const createContact = async (data) => {
     setSaving(true);
@@ -445,7 +702,8 @@ export default function App() {
     home: ["Good morning.", "Here's who could use a little attention today."],
     people: ["Your Circle", "Browse and update the people in your loop."],
     reminders: ["Stay Thoughtful", "Keep track of the moments that need a follow-up."],
-    birthdays: ["Worth Celebrating", "See upcoming birthdays at a glance."]
+    birthdays: ["Worth Celebrating", "See upcoming birthdays at a glance."],
+    settings: ["Settings", "Manage your account, security, data, and app details."]
   };
   const [title, subtitle] = viewTitles[activeView];
   const calendarEvents = useMemo(() => {
@@ -491,6 +749,7 @@ export default function App() {
           <button type="button" className={activeView === "people" ? "active" : ""} onClick={() => goTo("people")}><Users size={19} /> People <span>{contacts.length}</span></button>
           <button type="button" className={activeView === "reminders" ? "active" : ""} onClick={() => goTo("reminders")}><Bell size={19} /> Reminders <span>{dashboard.counts.upcoming || 0}</span></button>
           <button type="button" className={activeView === "birthdays" ? "active" : ""} onClick={() => goTo("birthdays")}><Cake size={19} /> Birthdays <span>{dashboard.birthdays.length}</span></button>
+          <button type="button" className={activeView === "settings" ? "active" : ""} onClick={() => goTo("settings")}><Settings size={19} /> Settings</button>
         </nav>
         <div className="sidebar-foot">
           <div className="user-avatar">{initials(currentUser?.name)}</div>
@@ -523,6 +782,13 @@ export default function App() {
 
         {error && <div className="error-banner"><strong>HumanLoop couldn't complete that request.</strong> {error}</div>}
 
+        {activeView === "settings" ? <SettingsPage
+          user={currentUser}
+          onUserChanged={setCurrentUser}
+          onDataChanged={load}
+          onDeleted={() => { setCurrentUser(null); setAuthenticated(false); }}
+          notify={notify}
+        /> : <>
         {activeView === "home" && <section className="stats">
           <div><span className="stat-icon green"><Users /></span><p>People in your loop</p><strong>{dashboard.counts.contacts || 0}</strong><small>Keep the circle meaningful</small></div>
           <div><span className="stat-icon orange"><Bell /></span><p>Due this week</p><strong>{dashboard.counts.upcoming || 0}</strong><small>Thoughtful moments ahead</small></div>
@@ -579,6 +845,7 @@ export default function App() {
                   <button type="button" className="icon-button" onClick={() => changeMonth(1)} aria-label="Next month"><ChevronRight size={16} /></button>
                 </div>
                 <div className="mini-calendar">
+                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((label) => <span className="weekday" key={label}>{label}</span>)}
                   {calendarDays.map((day, index) => day ? <button type="button" className={`mini-day ${day.events.length ? "has-events" : ""}`} key={day.key}>
                     <span>{day.day}</span>
                     {!!day.events.length && <em>{day.events.length}</em>}
@@ -586,7 +853,7 @@ export default function App() {
                 </div>
                 <div className="schedule-list">
                   {calendarEvents.slice(0, 5).map((event) => <button type="button" key={`${event.type}-${event.id}-${event.eventDate}`} onClick={() => setSelected(event.contact_id)}>
-                    <span className={`event-dot ${event.type}`} />
+                    <span className={`event-dot event-${event.type}`} />
                     <div><strong>{event.type === "meeting" ? "Meetup" : event.type}</strong><small>{event.title} - {prettyDate(event.eventDate)}</small></div>
                   </button>)}
                   {!calendarEvents.length && <div className="empty-small">Scheduled meetings, meetups, reminders, and birthdays will highlight here.</div>}
@@ -616,6 +883,7 @@ export default function App() {
             </section>
           </aside>
         </div>
+        </>}
 
       </main>
 

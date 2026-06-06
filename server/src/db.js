@@ -32,6 +32,10 @@ export async function initializeDatabase() {
     database,
     waitForConnections: true,
     connectionLimit: 10,
+    maxIdle: 10,
+    idleTimeout: 60000,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
     dateStrings: true,
     ssl
   });
@@ -41,11 +45,22 @@ export async function initializeDatabase() {
       id INT PRIMARY KEY AUTO_INCREMENT,
       name VARCHAR(120) NOT NULL,
       email VARCHAR(190) NOT NULL UNIQUE,
+      phone VARCHAR(50),
       password_hash VARCHAR(255) NOT NULL,
+      two_factor_secret TEXT,
+      two_factor_enabled BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
+  for (const statement of [
+    "ALTER TABLE users ADD COLUMN phone VARCHAR(50) NULL AFTER email",
+    "ALTER TABLE users ADD COLUMN two_factor_secret TEXT NULL AFTER password_hash",
+    "ALTER TABLE users ADD COLUMN two_factor_enabled BOOLEAN DEFAULT FALSE AFTER two_factor_secret"
+  ]) {
+    try { await pool.query(statement); }
+    catch (error) { if (error.code !== "ER_DUP_FIELDNAME") throw error; }
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contacts (
       id INT PRIMARY KEY AUTO_INCREMENT,
@@ -58,6 +73,7 @@ export async function initializeDatabase() {
       notes TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_contacts_user_birthday (user_id, birthday),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
@@ -84,6 +100,7 @@ export async function initializeDatabase() {
       summary TEXT,
       meeting_date DATETIME DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_notes_contact_date (contact_id, meeting_date),
       FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
     )
   `);
@@ -97,6 +114,7 @@ export async function initializeDatabase() {
       status ENUM('pending', 'completed') DEFAULT 'pending',
       completed_at DATETIME,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_reminders_contact_status_due (contact_id, status, due_date),
       FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
     )
   `);
@@ -125,12 +143,42 @@ export async function initializeDatabase() {
       used_at DATETIME,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_password_reset_user (user_id),
+      INDEX idx_reset_token_state (token_hash, used_at, expires_at),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS login_activity (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      user_id INT,
+      email VARCHAR(190),
+      ip_address VARCHAR(80),
+      user_agent VARCHAR(500),
+      status ENUM('success', 'failed', '2fa_required') NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_login_activity_user (user_id, created_at),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+  for (const statement of [
+    "ALTER TABLE contacts ADD INDEX idx_contacts_user_birthday (user_id, birthday)",
+    "ALTER TABLE meeting_notes ADD INDEX idx_notes_contact_date (contact_id, meeting_date)",
+    "ALTER TABLE reminders ADD INDEX idx_reminders_contact_status_due (contact_id, status, due_date)",
+    "ALTER TABLE password_reset_tokens ADD INDEX idx_reset_token_state (token_hash, used_at, expires_at)"
+  ]) {
+    try { await pool.query(statement); }
+    catch (error) { if (error.code !== "ER_DUP_KEYNAME") throw error; }
+  }
 }
 
 export function db() {
   if (!pool) throw new Error("Database has not been initialized.");
   return pool;
+}
+
+export async function closeDatabase() {
+  if (!pool) return;
+  const activePool = pool;
+  pool = undefined;
+  await activePool.end();
 }

@@ -1,6 +1,24 @@
 # HumanLoop
 
-HumanLoop is a multi-user AI personal CRM for remembering the details that make relationships meaningful. It includes private accounts, contact management, meeting notes with AI summaries, follow-up suggestions, reminders, birthdays, relationship health scores, and a persistent AI agent that can manage CRM records.
+HumanLoop v2 is a multi-user AI personal CRM for remembering the details that make relationships meaningful. It includes private accounts, contact management, meeting notes with AI summaries, follow-up suggestions, reminders, birthdays, relationship health scores, a persistent AI agent, account security settings, and portable data tools.
+
+## V2 highlights
+
+- Account profile, password, TOTP two-factor authentication, login history, and account deletion.
+- CSV and Excel contact import plus CSV, Excel, and JSON exports.
+- Full JSON backup and transactional merge or replace restore.
+- Per-user storage usage reporting.
+- Settings page with version, about, creator, and credits.
+- Calendar weekday labels and corrected event markers.
+- Password visibility controls on sign-in, signup, and reset forms.
+
+## Performance
+
+- Spreadsheet libraries are downloaded only when import or export is used.
+- Backups and dashboard data use parallel, indexed queries.
+- Large contact imports are inserted in transactional batches.
+- Production responses use compression and immutable caching for hashed assets.
+- Docker builds use lockfile-based `npm ci` installs.
 
 ## Stack
 
