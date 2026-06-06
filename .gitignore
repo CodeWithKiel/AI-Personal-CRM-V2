@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+coverage/
+chrome-*-profile*/
+humanloop-*.png
+vite-preview*.log

@@ -1,0 +1,35 @@
+CREATE DATABASE IF NOT EXISTS humanloop;
+USE humanloop;
+
+CREATE TABLE contacts (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(120) NOT NULL,
+  email VARCHAR(190),
+  phone VARCHAR(50),
+  birthday DATE,
+  company VARCHAR(150),
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE meeting_notes (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  contact_id INT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT,
+  meeting_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE reminders (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  contact_id INT NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  due_date DATE NOT NULL,
+  reason VARCHAR(255),
+  status ENUM('pending', 'completed') DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+);
