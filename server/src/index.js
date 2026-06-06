@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import compression from "compression";
 import cors from "cors";
 import express from "express";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authenticator } from "otplib";
@@ -828,11 +829,11 @@ app.post("/api/ai/chat", async (req, res, next) => {
 
 app.use("/api", (_req, res) => res.status(404).json({ message: "API route not found" }));
 
-if (process.env.NODE_ENV === "production") {
-  const clientDist = path.resolve(__dirname, "../../client/dist");
+const clientDist = path.resolve(__dirname, "../../client/dist");
+if (existsSync(path.join(clientDist, "index.html"))) {
   app.use(express.static(clientDist, {
-    maxAge: "1y",
-    immutable: true,
+    maxAge: process.env.NODE_ENV === "production" ? "1y" : 0,
+    immutable: process.env.NODE_ENV === "production",
     setHeaders: (res, filePath) => {
       if (filePath.endsWith("index.html")) res.setHeader("Cache-Control", "no-cache");
     }

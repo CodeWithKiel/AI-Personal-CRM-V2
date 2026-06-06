@@ -1,5 +1,10 @@
 # HumanLoop Changelog
 
+## Startup Fix
+
+- The Express server now serves an existing React production build even when the local `.env` uses development mode.
+- Fixed `npm start` returning a 404 for the app while the API remained healthy.
+
 ## Workspace Cleanup
 
 - Updated the app creator credit to VibeCodersPH.
