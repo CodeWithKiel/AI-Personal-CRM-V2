@@ -855,7 +855,14 @@ if (existsSync(path.join(clientDist, "index.html"))) {
     maxAge: process.env.NODE_ENV === "production" ? "1y" : 0,
     immutable: process.env.NODE_ENV === "production",
     setHeaders: (res, filePath) => {
-      if (filePath.endsWith("index.html")) res.setHeader("Cache-Control", "no-cache");
+      if (
+        filePath.endsWith("index.html") ||
+        filePath.endsWith("sw.js") ||
+        filePath.endsWith("manifest.webmanifest") ||
+        filePath.endsWith("offline.html")
+      ) {
+        res.setHeader("Cache-Control", "no-cache");
+      }
     }
   }));
   app.use((_req, res) => res.sendFile(path.join(clientDist, "index.html")));

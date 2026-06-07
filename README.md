@@ -121,6 +121,25 @@ Open the Render URL and create an account. The deployment health endpoint is:
 https://your-render-url.onrender.com/api/health
 ```
 
+## Installable app and Android APK
+
+HumanLoop is an installable Progressive Web App. Browser users can select
+**Install app** or **Add to Home Screen** without changing how the normal website
+works.
+
+To generate an Android package without Expo or Android Studio:
+
+1. Wait for the latest Render deployment to become live.
+2. Open [PWABuilder](https://www.pwabuilder.com/).
+3. Enter `https://humanloop-v2.onrender.com`.
+4. Choose **Package for stores**, then **Android**.
+5. Use package ID `ph.vibecoders.humanloop` and app name `HumanLoop`.
+6. Download the generated Android package.
+
+The installed app requires internet access for CRM data and AI features. Its
+service worker keeps the app shell available and displays a safe offline state;
+API responses and private CRM data are never cached.
+
 ## Self-hosted production
 
 Build the React app:

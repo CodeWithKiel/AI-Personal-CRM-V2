@@ -1,5 +1,33 @@
 # HumanLoop Changelog
 
+## PWA and Android Packaging
+
+### Added
+
+- Added an installable web app manifest with HumanLoop branding and standalone display mode.
+- Added 192px, 512px, and Android maskable PNG icons.
+- Added a production service worker for the app shell and static assets.
+- Added a dedicated offline experience without caching API responses or private CRM data.
+- Added mobile and Apple install metadata.
+- Added PWABuilder instructions using package ID `ph.vibecoders.humanloop`.
+
+### Deployment
+
+- Service worker, manifest, and offline files use `no-cache` headers so future Render deployments update correctly.
+- Existing hashed JavaScript and CSS assets retain long-lived production caching.
+
+### Files Changed
+
+- `client/index.html` - Added PWA, mobile, manifest, icon, and app-description metadata.
+- `client/src/main.jsx` - Registers the service worker only in production.
+- `client/public/manifest.webmanifest` - Defines installable app identity, theme, display mode, and icons.
+- `client/public/sw.js` - Provides update-safe shell caching and excludes all API requests.
+- `client/public/offline.html` - Provides the offline fallback experience.
+- `client/public/icons/` - Contains standard and maskable Android app icons.
+- `server/src/index.js` - Adds update-safe cache headers for PWA control files.
+- `README.md` - Documents browser installation and PWABuilder Android packaging.
+- `CHANGELOG.md` - Records this PWA release and changed-file inventory.
+
 ## Relationship Workflow Update
 
 ### Added

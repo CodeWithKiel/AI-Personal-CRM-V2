@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "HumanLoop Personal CRM",
+  "short_name": "HumanLoop",
+  "description": "An AI personal CRM for remembering details, nurturing relationships, and planning thoughtful follow-ups.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f2f0e9",
+  "theme_color": "#235f50",
+  "categories": ["productivity", "business", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

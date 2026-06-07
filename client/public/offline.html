@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#235f50" />
+    <title>HumanLoop is offline</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: #f2f0e9;
+        color: #26332f;
+        font-family: system-ui, sans-serif;
+        text-align: center;
+      }
+      main { width: min(420px, 100%); }
+      .mark {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 20px;
+        border-radius: 22px;
+        display: grid;
+        place-items: center;
+        background: #235f50;
+        color: #e5efea;
+        font-size: 30px;
+        font-weight: 800;
+      }
+      h1 { margin: 0 0 8px; font-size: 25px; }
+      p { margin: 0 0 20px; color: #74807b; line-height: 1.55; }
+      button {
+        border: 0;
+        border-radius: 9px;
+        padding: 11px 18px;
+        background: #235f50;
+        color: white;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark">H</div>
+      <h1>HumanLoop is offline</h1>
+      <p>Your CRM data stays safe online. Reconnect to the internet, then try again.</p>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </main>
+  </body>
+</html>
