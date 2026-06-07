@@ -333,13 +333,14 @@ function normalizeImportedContact(row) {
     phone: String(source.phone || source.phonenumber || "").trim() || null,
     birthday: source.birthday ? String(source.birthday).slice(0, 10) : null,
     company: String(source.company || "").trim() || null,
+    image_url: String(source.imageurl || source.profilepictureurl || source.photo || source.picture || "").trim() || null,
     notes: String(source.notes || source.note || "").trim() || null
   };
 }
 
 async function getBackup(userId) {
   const [[contacts], [meetingNotes], [reminders], [chatMessages]] = await Promise.all([
-    db().query("SELECT id, name, email, phone, birthday, company, notes FROM contacts WHERE user_id = ? ORDER BY id", [userId]),
+    db().query("SELECT id, name, email, phone, birthday, company, image_url, notes FROM contacts WHERE user_id = ? ORDER BY id", [userId]),
     db().query(`
       SELECT n.contact_id, n.content, n.summary, n.meeting_date
       FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id
@@ -390,13 +391,13 @@ app.post("/api/settings/import-contacts", async (req, res, next) => {
     }
     for (let offset = 0; offset < validContacts.length; offset += 250) {
       const chunk = validContacts.slice(offset, offset + 250);
-      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
       const values = chunk.flatMap((contact) => [
         req.userId, contact.name, contact.email, contact.phone,
-        contact.birthday, contact.company, contact.notes
+        contact.birthday, contact.company, contact.image_url, contact.notes
       ]);
       await connection.query(`
-        INSERT INTO contacts (user_id, name, email, phone, birthday, company, notes)
+        INSERT INTO contacts (user_id, name, email, phone, birthday, company, image_url, notes)
         VALUES ${placeholders}
       `, values);
     }
@@ -430,9 +431,9 @@ app.post("/api/settings/restore", async (req, res, next) => {
       const contact = normalizeImportedContact(raw);
       if (!contact.name) continue;
       const [result] = await connection.query(`
-        INSERT INTO contacts (user_id, name, email, phone, birthday, company, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [req.userId, contact.name, contact.email, contact.phone, contact.birthday, contact.company, contact.notes]);
+        INSERT INTO contacts (user_id, name, email, phone, birthday, company, image_url, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [req.userId, contact.name, contact.email, contact.phone, contact.birthday, contact.company, contact.image_url, contact.notes]);
       for (const note of Array.isArray(raw.meetingNotes) ? raw.meetingNotes : []) {
         if (!note.content) continue;
         await connection.query(`
@@ -475,6 +476,7 @@ app.get("/api/settings/storage", async (req, res, next) => {
           SELECT COALESCE(SUM(
             OCTET_LENGTH(COALESCE(name, '')) + OCTET_LENGTH(COALESCE(email, '')) +
             OCTET_LENGTH(COALESCE(phone, '')) + OCTET_LENGTH(COALESCE(company, '')) +
+            OCTET_LENGTH(COALESCE(image_url, '')) +
             OCTET_LENGTH(COALESCE(notes, ''))
           ), 0) FROM contacts WHERE user_id = ?
         ) +
@@ -505,7 +507,7 @@ app.get("/api/dashboard", async (req, res, next) => {
         (SELECT COUNT(*) FROM meeting_notes n JOIN contacts c ON c.id = n.contact_id WHERE c.user_id = ? AND n.meeting_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)) interactions
     `, [req.userId, req.userId, req.userId, req.userId]),
       db().query(`
-      SELECT id, name, birthday, company
+      SELECT id, name, birthday, company, image_url
       FROM contacts
       WHERE user_id = ? AND birthday IS NOT NULL
       ORDER BY MOD(DAYOFYEAR(birthday) - DAYOFYEAR(CURDATE()) + 366, 366)
@@ -582,14 +584,17 @@ app.get("/api/contacts/:id", async (req, res, next) => {
 
 app.post("/api/contacts", async (req, res, next) => {
   try {
-    const { name, email, phone, birthday, company, notes } = req.body;
+    const { name, email, phone, birthday, company, image_url, notes } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Name is required" });
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ message: "Enter a valid email address" });
     }
+    if (image_url && !/^https?:\/\/\S+$/i.test(image_url)) {
+      return res.status(400).json({ message: "Profile picture must be a valid http or https URL" });
+    }
     const [result] = await db().query(
-      "INSERT INTO contacts (user_id, name, email, phone, birthday, company, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [req.userId, name.trim(), email || null, phone || null, birthday || null, company || null, notes || null]
+      "INSERT INTO contacts (user_id, name, email, phone, birthday, company, image_url, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [req.userId, name.trim(), email || null, phone || null, birthday || null, company || null, image_url || null, notes || null]
     );
     res.status(201).json({ id: result.insertId });
   } catch (error) { next(error); }
@@ -597,14 +602,17 @@ app.post("/api/contacts", async (req, res, next) => {
 
 app.put("/api/contacts/:id", async (req, res, next) => {
   try {
-    const { name, email, phone, birthday, company, notes } = req.body;
+    const { name, email, phone, birthday, company, image_url, notes } = req.body;
     if (!name?.trim()) return res.status(400).json({ message: "Name is required" });
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ message: "Enter a valid email address" });
     }
+    if (image_url && !/^https?:\/\/\S+$/i.test(image_url)) {
+      return res.status(400).json({ message: "Profile picture must be a valid http or https URL" });
+    }
     const [result] = await db().query(
-      "UPDATE contacts SET name=?, email=?, phone=?, birthday=?, company=?, notes=? WHERE id=? AND user_id=?",
-      [name.trim(), email || null, phone || null, birthday || null, company || null, notes || null, req.params.id, req.userId]
+      "UPDATE contacts SET name=?, email=?, phone=?, birthday=?, company=?, image_url=?, notes=? WHERE id=? AND user_id=?",
+      [name.trim(), email || null, phone || null, birthday || null, company || null, image_url || null, notes || null, req.params.id, req.userId]
     );
     if (!result.affectedRows) return res.status(404).json({ message: "Contact not found" });
     res.json({ message: "Contact updated" });
@@ -623,9 +631,13 @@ app.post("/api/contacts/:id/notes", async (req, res, next) => {
   try {
     const { content, meeting_date } = req.body;
     if (!content?.trim()) return res.status(400).json({ message: "Meeting notes are required" });
-    const [[ownedContact]] = await db().query("SELECT id FROM contacts WHERE id = ? AND user_id = ?", [req.params.id, req.userId]);
+    const [[ownedContact]] = await db().query("SELECT id, name, company, notes FROM contacts WHERE id = ? AND user_id = ?", [req.params.id, req.userId]);
     if (!ownedContact) return res.status(404).json({ message: "Contact not found" });
-    const summary = await summarizeNote(content);
+    const [recentNotes] = await db().query(
+      "SELECT content, summary, meeting_date FROM meeting_notes WHERE contact_id = ? ORDER BY meeting_date DESC LIMIT 3",
+      [req.params.id]
+    );
+    const summary = await summarizeNote(content, { contact: ownedContact, recentNotes });
     const [result] = await db().query(
       "INSERT INTO meeting_notes (contact_id, content, summary, meeting_date) VALUES (?, ?, ?, ?)",
       [req.params.id, content.trim(), summary, meeting_date || new Date()]
@@ -715,9 +727,11 @@ async function executeAgentAction(userId, action) {
     if (!name) throw new Error("I need the person's name before I can add them.");
     const email = String(data.email || "").trim() || null;
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("The contact email is not valid.");
+    const imageUrl = String(data.image_url || "").trim() || null;
+    if (imageUrl && !/^https?:\/\/\S+$/i.test(imageUrl)) throw new Error("The profile picture URL is not valid.");
     const [result] = await db().query(
-      "INSERT INTO contacts (user_id, name, email, phone, birthday, company, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [userId, name, email, data.phone || null, data.birthday || null, data.company || null, data.notes || null]
+      "INSERT INTO contacts (user_id, name, email, phone, birthday, company, image_url, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [userId, name, email, data.phone || null, data.birthday || null, data.company || null, imageUrl, data.notes || null]
     );
     return { changed: true, action: "contact_added", contactId: result.insertId };
   }
@@ -738,14 +752,16 @@ async function executeAgentAction(userId, action) {
         phone: data.phone ?? contact.phone,
         birthday: data.birthday ?? contact.birthday,
         company: data.company ?? contact.company,
+        image_url: data.image_url ?? contact.image_url,
         notes: data.notes ?? contact.notes
       };
       if (!String(next.name || "").trim()) throw new Error("A contact must have a name.");
       if (next.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.email)) throw new Error("The contact email is not valid.");
+      if (next.image_url && !/^https?:\/\/\S+$/i.test(next.image_url)) throw new Error("The profile picture URL is not valid.");
       await db().query(`
-        UPDATE contacts SET name = ?, email = ?, phone = ?, birthday = ?, company = ?, notes = ?
+        UPDATE contacts SET name = ?, email = ?, phone = ?, birthday = ?, company = ?, image_url = ?, notes = ?
         WHERE id = ? AND user_id = ?
-      `, [next.name, next.email || null, next.phone || null, next.birthday || null, next.company || null, next.notes || null, contactId, userId]);
+      `, [next.name, next.email || null, next.phone || null, next.birthday || null, next.company || null, next.image_url || null, next.notes || null, contactId, userId]);
       return { changed: true, action: "contact_updated", contactId };
     }
     if (type === "add_reminder") {
@@ -762,7 +778,11 @@ async function executeAgentAction(userId, action) {
     if (type === "add_note") {
       const content = String(data.content || "").trim();
       if (!content) throw new Error("I need the meeting note content.");
-      const summary = await summarizeNote(content);
+      const [recentNotes] = await db().query(
+        "SELECT content, summary, meeting_date FROM meeting_notes WHERE contact_id = ? ORDER BY meeting_date DESC LIMIT 3",
+        [contactId]
+      );
+      const summary = await summarizeNote(content, { contact, recentNotes });
       const [result] = await db().query(
         "INSERT INTO meeting_notes (contact_id, content, summary, meeting_date) VALUES (?, ?, ?, ?)",
         [contactId, content, summary, data.meeting_date || new Date()]

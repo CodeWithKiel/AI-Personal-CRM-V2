@@ -83,21 +83,27 @@ function parseJSON(value) {
   }
 }
 
-export async function summarizeNote(content) {
+export async function summarizeNote(content, context = {}) {
   const result = await askAI(
-    "Summarize CRM meeting notes in 2 concise sentences. Include commitments and next steps. Return plain text.",
-    content
+    `You are a relationship assistant. Use only the supplied meeting note and CRM context.
+Write a concise 2-3 sentence response:
+1. Summarize what actually happened, including concrete commitments or personal details.
+2. Suggest one specific next step grounded directly in the note.
+Do not invent facts. Return plain text.`,
+    JSON.stringify({ meetingNote: content, contact: context.contact || null, recentMeetings: context.recentNotes || [] })
   );
   if (result) return result;
 
   const sentences = content.match(/[^.!?]+[.!?]+/g) || [content];
-  return sentences.slice(0, 2).join(" ").trim();
+  const recap = sentences.slice(0, 2).join(" ").trim();
+  const latestDetail = sentences.at(-1).trim().replace(/[.!?]+$/, "");
+  return `${recap} Suggested next step: follow up on "${latestDetail}".`;
 }
 
 export async function generateFollowUp(contact, notes = []) {
   const context = JSON.stringify({ contact, recentNotes: notes.slice(0, 3) });
   const result = await askAI(
-    "You are a thoughtful relationship assistant. Suggest one specific, warm follow-up action in 1-2 sentences. Avoid salesy language.",
+    "You are a thoughtful relationship assistant. Base the suggestion primarily on the latest meeting notes. Suggest one specific, warm follow-up action in 1-2 sentences. Refer to a real topic, commitment, or personal detail from the supplied notes when one exists. Never invent facts and avoid salesy language.",
     context
   );
   if (result) return result;
@@ -149,8 +155,8 @@ Use the supplied CRM data to answer questions or perform requested tasks.
 Return ONLY valid JSON with this shape:
 {"reply":"short response","action":{"type":"none|add_contact|update_contact|delete_contact|add_reminder|complete_reminder|add_note","data":{}}}
 Action data:
-add_contact: name required; optional email, phone, birthday YYYY-MM-DD, company, notes.
-update_contact: contact_id required plus only fields to change.
+add_contact: name required; optional email, phone, birthday YYYY-MM-DD, company, image_url, notes.
+update_contact: contact_id required plus only fields to change, including image_url when requested.
 delete_contact: contact_id required. Use only when the user explicitly asks to delete.
 add_reminder: contact_id, title, due_date YYYY-MM-DD required; reason optional.
 complete_reminder: reminder_id required.

@@ -73,6 +73,7 @@ export async function initializeDatabase() {
       phone VARCHAR(50),
       birthday DATE,
       company VARCHAR(150),
+      image_url VARCHAR(2048),
       notes TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -82,6 +83,11 @@ export async function initializeDatabase() {
   `);
   try {
     await pool.query("ALTER TABLE contacts ADD COLUMN user_id INT NULL AFTER id");
+  } catch (error) {
+    if (error.code !== "ER_DUP_FIELDNAME") throw error;
+  }
+  try {
+    await pool.query("ALTER TABLE contacts ADD COLUMN image_url VARCHAR(2048) NULL AFTER company");
   } catch (error) {
     if (error.code !== "ER_DUP_FIELDNAME") throw error;
   }

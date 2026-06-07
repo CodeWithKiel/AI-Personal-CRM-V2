@@ -1,5 +1,32 @@
 # HumanLoop Changelog
 
+## Relationship Workflow Update
+
+### Added
+
+- Added contact profile pictures through external image URLs; only the URL is saved in MySQL and no image files are stored by HumanLoop.
+- Added a calendar date picker when turning an AI follow-up suggestion into a reminder.
+- Added multiple randomized relationship nudges with a control to show another quote.
+
+### Improved
+
+- AI meeting-note recaps now use the contact and recent meeting history and include a specific next step grounded in the submitted note.
+- AI follow-up suggestions explicitly prioritize real topics, commitments, and personal details from recent meeting notes.
+- Opening the AI assistant now scrolls directly to the newest saved conversation.
+- Dashboard, sidebar, cards, contact rows, and header controls switch layouts earlier for tablet and narrow laptop widths.
+- Contact image URLs are preserved in CSV/Excel exports, JSON backup and restore, and bulk imports.
+
+### Files Changed
+
+- `client/src/App.jsx` - Added contact-photo rendering/editing, reminder date selection, latest-chat scrolling, randomized nudges, and updated meeting insight labels.
+- `client/src/styles.css` - Added photo, reminder popover, meeting insight, and revised responsive layout styles.
+- `server/src/ai.js` - Grounded meeting summaries and follow-up prompts in contact and meeting-note context.
+- `server/src/db.js` - Added the automatic `contacts.image_url` migration.
+- `server/src/index.js` - Added image URL validation and persistence across CRUD, import/export, backup/restore, AI actions, and storage reporting.
+- `server/schema.sql` - Added `image_url` to the canonical contacts schema.
+- `README.md` - Documented the new relationship workflow capabilities.
+- `CHANGELOG.md` - Recorded this release and its changed-file inventory.
+
 ## Dashboard Experience
 
 - Added a new HumanLoop loop-mark favicon.

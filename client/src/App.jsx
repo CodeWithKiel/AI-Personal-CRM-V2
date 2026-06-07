@@ -8,7 +8,15 @@ import {
 } from "lucide-react";
 import { api } from "./api";
 
-const emptyContact = { name: "", email: "", phone: "", birthday: "", company: "", notes: "" };
+const emptyContact = { name: "", email: "", phone: "", birthday: "", company: "", image_url: "", notes: "" };
+const nudgeQuotes = [
+  { title: "Relationships grow in small moments.", detail: "A two-minute check-in can mean more than a perfectly timed message." },
+  { title: "Curiosity keeps connection alive.", detail: "Ask one thoughtful question and give the answer room to breathe." },
+  { title: "Remembering is a form of care.", detail: "Bring up a detail they shared and let them know it stayed with you." },
+  { title: "Consistency matters more than perfection.", detail: "A simple hello today is better than an elaborate message someday." },
+  { title: "Celebrate the ordinary wins.", detail: "Small progress deserves recognition, especially from someone who remembers." },
+  { title: "Follow up while the moment is warm.", detail: "A timely note can turn a good conversation into a lasting connection." }
+];
 
 function initials(name = "") {
   return name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
@@ -38,6 +46,19 @@ function dateKey(value) {
 
 function monthKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function ContactAvatar({ contact, size = "" }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageUrl = contact?.image_url;
+  useEffect(() => setImageFailed(false), [imageUrl]);
+  return (
+    <div className={`avatar ${size} ${imageUrl && !imageFailed ? "has-image" : ""}`}>
+      {imageUrl && !imageFailed
+        ? <img src={imageUrl} alt="" referrerPolicy="no-referrer" onError={() => setImageFailed(true)} />
+        : initials(contact?.name)}
+    </div>
+  );
 }
 
 function greetingForTime(date = new Date()) {
@@ -173,6 +194,7 @@ function AIChat({ user, onChanged }) {
   const [open, setOpen] = useState(() => localStorage.getItem("humanloop-chat-open") === "true");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const messagesEndRef = useRef(null);
   const greeting = { role: "assistant", content: `Hi ${user?.name?.split(" ")[0] || "there"}. I can answer questions and manage contacts, notes, and reminders for you.` };
   const [messages, setMessages] = useState([greeting]);
 
@@ -184,6 +206,10 @@ function AIChat({ user, onChanged }) {
       .then((history) => setMessages(history.length ? history : [greeting]))
       .catch(() => setMessages([greeting]));
   }, [user?.id]);
+  useEffect(() => {
+    if (!open) return;
+    window.requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ block: "end" }));
+  }, [open, messages, busy]);
 
   const send = async (event, suggestedMessage) => {
     event?.preventDefault();
@@ -223,6 +249,7 @@ function AIChat({ user, onChanged }) {
         <div className="ai-chat-messages">
           {messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>{message.content}</div>)}
           {busy && <div className="chat-message assistant thinking">Thinking...</div>}
+          <div ref={messagesEndRef} />
         </div>
         {messages.length === 1 && <div className="chat-prompts">
           {["Add Jordan Lee at Acme", "Remind me to call Jordan next Friday", "Who should I follow up with?"].map((prompt) =>
@@ -348,7 +375,7 @@ function SettingsPage({ user, onUserChanged, onDataChanged, onDeleted, notify })
 
   const exportContacts = (format) => run(async () => {
     const backup = await api.exportData();
-    const contacts = backup.contacts.map(({ name, email, phone, birthday, company, notes }) => ({ name, email, phone, birthday, company, notes }));
+    const contacts = backup.contacts.map(({ name, email, phone, birthday, company, image_url, notes }) => ({ name, email, phone, birthday, company, image_url, notes }));
     if (format === "csv") {
       const { default: Papa } = await import("papaparse");
       downloadFile("humanloop-contacts.csv", Papa.unparse(contacts), "text/csv;charset=utf-8");
@@ -360,6 +387,7 @@ function SettingsPage({ user, onUserChanged, onDataChanged, onDeleted, notify })
         { column: "Phone", type: String, value: (row) => row.phone || "" },
         { column: "Birthday", type: String, value: (row) => row.birthday || "" },
         { column: "Company", type: String, value: (row) => row.company || "" },
+        { column: "Profile Picture URL", type: String, value: (row) => row.image_url || "" },
         { column: "Notes", type: String, value: (row) => row.notes || "" }
       ];
       await writeXlsxFile(contacts, { schema, fileName: "humanloop-contacts.xlsx" });
@@ -479,6 +507,8 @@ function ContactForm({ initial = emptyContact, onSubmit, onClose, saving }) {
         <label>Phone <input value={form.phone || ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 555 0123" /></label>
         <label>Company <input value={form.company || ""} onChange={(e) => setForm({ ...form, company: e.target.value })} placeholder="Company" /></label>
         <label>Birthday <input type="date" value={form.birthday || ""} onChange={(e) => setForm({ ...form, birthday: e.target.value })} /></label>
+        <label className="wide">Profile picture URL <input type="url" value={form.image_url || ""} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://example.com/photo.jpg" /></label>
+        {form.image_url && <div className="wide profile-picture-preview"><ContactAvatar contact={form} size="large" /><span>Only this image link is saved in MySQL. HumanLoop does not upload or store the picture file.</span></div>}
         <label className="wide">What should you remember? <textarea rows="4" value={form.notes || ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Interests, family, preferences, context..." /></label>
       </div>
       <div className="form-actions">
@@ -495,6 +525,8 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
   const [note, setNote] = useState("");
   const [meetingDate, setMeetingDate] = useState(new Date().toISOString().slice(0, 10));
   const [suggestion, setSuggestion] = useState("");
+  const [reminderDate, setReminderDate] = useState("");
+  const [showReminderCalendar, setShowReminderCalendar] = useState(false);
   const [highlights, setHighlights] = useState([]);
   const [busy, setBusy] = useState(false);
 
@@ -541,25 +573,32 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
     setBusy(true);
     try {
       setSuggestion((await api.followUp(contactId)).suggestion);
+      const due = new Date();
+      due.setDate(due.getDate() + 3);
+      setReminderDate(due.toISOString().slice(0, 10));
+      setShowReminderCalendar(false);
     } catch (error) {
       notify(error.message, "error");
     }
     finally { setBusy(false); }
   };
   const makeReminder = async () => {
+    if (!reminderDate) {
+      notify("Choose a reminder date.", "error");
+      return;
+    }
     setBusy(true);
     try {
-      const due = new Date();
-      due.setDate(due.getDate() + 3);
       await api.createReminder({
         contact_id: contactId,
         title: suggestion,
-        due_date: due.toISOString().slice(0, 10),
+        due_date: reminderDate,
         reason: "AI follow-up suggestion"
       });
       setSuggestion("");
+      setShowReminderCalendar(false);
       onChanged();
-      notify("Reminder added for three days from now.");
+      notify(`Reminder added for ${prettyDate(reminderDate, { year: true })}.`);
     } catch (error) {
       notify(error.message, "error");
     } finally {
@@ -573,7 +612,7 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
       <aside className="panel">
         <button type="button" className="icon-button panel-close" onClick={onClose} aria-label="Close contact details"><X size={20} /></button>
         <div className="panel-profile">
-          <div className="avatar large">{initials(contact.name)}</div>
+          <ContactAvatar contact={contact} size="large" />
           <div>
             <p className="eyebrow">Contact profile</p>
             <h2>{contact.name}</h2>
@@ -591,7 +630,13 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
             {suggestion && <div className="ai-card">
               <div><Sparkles size={18} /><strong>HumanLoop suggests</strong></div>
               <p>{suggestion}</p>
-              <button type="button" className="text-button" disabled={busy} onClick={makeReminder}>Add reminder for 3 days <ChevronRight size={15} /></button>
+              <div className="suggestion-actions">
+                <button type="button" className="text-button" onClick={() => setShowReminderCalendar(!showReminderCalendar)}><CalendarDays size={15} /> Choose reminder date</button>
+                {showReminderCalendar && <div className="reminder-date-popover">
+                  <label>Remind me on<input type="date" min={new Date().toISOString().slice(0, 10)} value={reminderDate} onChange={(event) => setReminderDate(event.target.value)} /></label>
+                  <button type="button" className="button primary" disabled={busy || !reminderDate} onClick={makeReminder}>Add reminder</button>
+                </div>}
+              </div>
             </div>}
             <div className="contact-meta">
               {contact.email ? <a href={`mailto:${contact.email}`}><Mail size={17} /><span>{contact.email}</span></a> : <div><Mail size={17} /><span>No email added</span></div>}
@@ -617,7 +662,7 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
                   <span className="timeline-dot" />
                   <div className="note-head"><strong>{prettyDate(item.meeting_date, { year: true })}</strong><span>Meeting</span></div>
                   <p>{item.content}</p>
-                  {item.summary && <div className="summary"><Sparkles size={14} /><span>{item.summary}</span></div>}
+                  {item.summary && <div className="summary"><Sparkles size={14} /><span><strong>AI recap & next step</strong>{item.summary}</span></div>}
                 </article>)}
                 {!contact.meeting_notes.length && <div className="empty-small">No meetings logged yet. Add the first note above.</div>}
               </div>
@@ -647,6 +692,7 @@ export default function App() {
   const [now, setNow] = useState(() => new Date());
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [showScheduleHighlights, setShowScheduleHighlights] = useState(false);
+  const [nudgeQuote, setNudgeQuote] = useState(() => nudgeQuotes[Math.floor(Math.random() * nudgeQuotes.length)]);
   const searchRequest = useRef(0);
 
   useEffect(() => {
@@ -820,11 +866,14 @@ export default function App() {
             <p>{subtitle}</p>
           </div>
           {activeView === "home" && <section className="header-nudge">
-            <Sparkles size={19} />
+            <button type="button" onClick={() => {
+              const alternatives = nudgeQuotes.filter((quote) => quote.title !== nudgeQuote.title);
+              setNudgeQuote(alternatives[Math.floor(Math.random() * alternatives.length)]);
+            }} aria-label="Show another gentle nudge" title="Show another gentle nudge"><Sparkles size={19} /></button>
             <div>
               <p className="eyebrow">A gentle nudge</p>
-              <strong>Relationships grow in small moments.</strong>
-              <span>A two-minute check-in can mean more than a perfectly timed message.</span>
+              <strong>{nudgeQuote.title}</strong>
+              <span>{nudgeQuote.detail}</span>
             </div>
           </section>}
           <div className="header-actions">
@@ -867,7 +916,7 @@ export default function App() {
               {contacts.map((contact) => <div className="contact-row" role="button" tabIndex="0" key={contact.id} onClick={() => setSelected(contact.id)} onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") setSelected(contact.id);
               }}>
-                <div className="avatar">{initials(contact.name)}</div>
+                <ContactAvatar contact={contact} />
                 <div className="contact-name"><strong>{contact.name}</strong><span>{contact.company || contact.email || "Personal contact"}</span></div>
                 <div className="last-seen"><span>Last connected</span><strong>{prettyDate(contact.last_interaction)}</strong></div>
                 <Score value={contact.relationship_score} />
@@ -932,7 +981,7 @@ export default function App() {
             <section className="card birthday-card">
               <div className="card-head"><div><p className="eyebrow">Worth celebrating</p><h2>Birthdays</h2></div><Cake size={20} /></div>
               {dashboard.birthdays.map((person) => <button type="button" key={person.id} onClick={() => setSelected(person.id)}>
-                <div className="avatar small">{initials(person.name)}</div>
+                <ContactAvatar contact={person} size="small" />
                 <div><strong>{person.name}</strong><span>{prettyDate(person.birthday)}</span></div>
                 <em>{daysUntil(person.birthday) === 0 ? "Today" : `${daysUntil(person.birthday)}d`}</em>
               </button>)}

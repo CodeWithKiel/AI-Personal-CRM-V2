@@ -11,6 +11,9 @@ HumanLoop v2 is a multi-user AI personal CRM for remembering the details that ma
 - Settings page with version, about, creator, and credits.
 - Calendar weekday labels and corrected event markers.
 - Password visibility controls on sign-in, signup, and reset forms.
+- Contact profile pictures stored as external image URLs without backend file storage.
+- AI meeting recaps with note-grounded next-step suggestions and schedulable follow-up reminders.
+- Latest-message chat positioning and responsive tablet/mobile dashboard layouts.
 
 ## Performance
 
