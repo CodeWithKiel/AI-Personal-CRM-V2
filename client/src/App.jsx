@@ -40,6 +40,44 @@ function monthKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function greetingForTime(date = new Date()) {
+  const hour = date.getHours();
+  if (hour < 12) return "Good Morning.";
+  if (hour < 18) return "Good Afternoon.";
+  return "Good Evening.";
+}
+
+function SplashScreen() {
+  return (
+    <div className="splash-screen" role="status" aria-label="Opening HumanLoop">
+      <div className="splash-mark"><span /><span /></div>
+      <strong>HumanLoop</strong>
+      <p>Keep the people who matter close.</p>
+      <div className="splash-progress"><span /></div>
+    </div>
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="dashboard-skeleton" aria-label="Loading your dashboard" aria-busy="true">
+      <section className="skeleton-stats">
+        {Array.from({ length: 4 }, (_, index) => <div className="skeleton-card" key={index}><i /><span /><strong /></div>)}
+      </section>
+      <section className="skeleton-grid">
+        <div className="skeleton-panel">
+          <div className="skeleton-heading" />
+          {Array.from({ length: 5 }, (_, index) => <div className="skeleton-row" key={index}><i /><span /><em /></div>)}
+        </div>
+        <div className="skeleton-panel compact">
+          <div className="skeleton-heading" />
+          {Array.from({ length: 4 }, (_, index) => <div className="skeleton-line" key={index} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function Score({ value = 10 }) {
   const color = value >= 75 ? "#167a61" : value >= 45 ? "#c67936" : "#a8524d";
   return (
@@ -593,6 +631,7 @@ function ContactPanel({ contactId, onClose, onChanged, notify }) {
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [dashboard, setDashboard] = useState({ counts: {}, birthdays: [], reminders: [], reminderHistory: [], calendarEvents: [] });
@@ -605,13 +644,17 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [activeView, setActiveView] = useState("home");
   const [theme, setTheme] = useState(() => localStorage.getItem("humanloop-theme") || "light");
+  const [now, setNow] = useState(() => new Date());
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [showScheduleHighlights, setShowScheduleHighlights] = useState(false);
   const searchRequest = useRef(0);
 
   useEffect(() => {
-    api.session()
-      .then((result) => {
+    Promise.all([
+      api.session(),
+      new Promise((resolve) => window.setTimeout(resolve, 650))
+    ])
+      .then(([result]) => {
         setAuthenticated(result.authenticated);
         setCurrentUser(result.user || null);
       })
@@ -620,6 +663,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("humanloop-theme", theme);
   }, [theme]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const notify = (message, type = "success") => {
     setToast({ message, type });
@@ -638,7 +685,7 @@ export default function App() {
     } catch (err) { setError(err.message); }
   };
   useEffect(() => {
-    if (!authenticated) return undefined;
+    if (!authenticated || initialLoading) return undefined;
     const requestId = ++searchRequest.current;
     const timer = setTimeout(() => {
       api.contacts(search)
@@ -653,12 +700,18 @@ export default function App() {
       clearTimeout(timer);
       if (requestId === searchRequest.current) searchRequest.current += 1;
     };
-  }, [search, authenticated]);
+  }, [search, authenticated, initialLoading]);
   useEffect(() => {
     if (!authenticated) return;
-    api.dashboard()
-      .then((dashboardData) => { setDashboard(dashboardData); setError(""); })
-      .catch((err) => setError(err.message));
+    setInitialLoading(true);
+    Promise.all([api.contacts(""), api.dashboard()])
+      .then(([contactData, dashboardData]) => {
+        setContacts(contactData);
+        setDashboard(dashboardData);
+        setError("");
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setInitialLoading(false));
   }, [authenticated]);
 
   const createContact = async (data) => {
@@ -697,9 +750,9 @@ export default function App() {
     }
   };
   const averageScore = useMemo(() => contacts.length ? Math.round(contacts.reduce((sum, c) => sum + Number(c.relationship_score), 0) / contacts.length) : 0, [contacts]);
-  const today = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
+  const today = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(now);
   const viewTitles = {
-    home: ["Good morning.", "Here's who could use a little attention today."],
+    home: [greetingForTime(now), "Here's who could use a little attention today."],
     people: ["Your Circle", "Browse and update the people in your loop."],
     reminders: ["Stay Thoughtful", "Keep track of the moments that need a follow-up."],
     birthdays: ["Worth Celebrating", "See upcoming birthdays at a glance."],
@@ -737,7 +790,7 @@ export default function App() {
   }, [calendarMonth, calendarEventsByDay]);
   const changeMonth = (offset) => setCalendarMonth((date) => new Date(date.getFullYear(), date.getMonth() + offset, 1));
 
-  if (authenticated === null) return <div className="app-loading">Opening HumanLoop...</div>;
+  if (authenticated === null) return <SplashScreen />;
   if (!authenticated) return <Login onAuthenticated={(user) => { setCurrentUser(user); setAuthenticated(true); }} />;
 
   return (
@@ -759,13 +812,21 @@ export default function App() {
       </aside>
 
       <main id="home">
-        <header>
+        <header className={activeView === "home" ? "home-header" : ""}>
           <button type="button" className="icon-button menu-button" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle navigation"><Menu /></button>
-          <div>
+          <div className="header-copy">
             <p className="eyebrow">{today}</p>
             <h1>{title}</h1>
             <p>{subtitle}</p>
           </div>
+          {activeView === "home" && <section className="header-nudge">
+            <Sparkles size={19} />
+            <div>
+              <p className="eyebrow">A gentle nudge</p>
+              <strong>Relationships grow in small moments.</strong>
+              <span>A two-minute check-in can mean more than a perfectly timed message.</span>
+            </div>
+          </section>}
           <div className="header-actions">
             <button
               type="button"
@@ -782,7 +843,7 @@ export default function App() {
 
         {error && <div className="error-banner"><strong>HumanLoop couldn't complete that request.</strong> {error}</div>}
 
-        {activeView === "settings" ? <SettingsPage
+        {initialLoading ? <DashboardSkeleton /> : activeView === "settings" ? <SettingsPage
           user={currentUser}
           onUserChanged={setCurrentUser}
           onDataChanged={load}
@@ -876,10 +937,6 @@ export default function App() {
                 <em>{daysUntil(person.birthday) === 0 ? "Today" : `${daysUntil(person.birthday)}d`}</em>
               </button>)}
               {!dashboard.birthdays.length && <div className="empty-small birthday-empty">No birthdays yet. Add one to a contact profile to see it here.</div>}
-            </section>
-            <section className="nudge-card">
-              <Sparkles size={22} />
-              <div><p className="eyebrow">A gentle nudge</p><h3>Relationships grow in small moments.</h3><p>A two-minute check-in can mean more than a perfectly timed message.</p></div>
             </section>
           </aside>
         </div>

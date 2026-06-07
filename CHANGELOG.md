@@ -1,5 +1,13 @@
 # HumanLoop Changelog
 
+## Dashboard Experience
+
+- Added a new HumanLoop loop-mark favicon.
+- Added a branded splash screen during session startup.
+- Added responsive skeleton loaders while contacts and dashboard data load.
+- Changed the home greeting automatically between morning, afternoon, and evening.
+- Moved the "A gentle nudge" message beside the home greeting for immediate visibility.
+
 ## Online Hosting
 
 - Replaced the Docker-based Render deployment with a free native Node web service.
