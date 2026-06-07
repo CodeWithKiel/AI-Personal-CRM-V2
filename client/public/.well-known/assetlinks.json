@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.onrender.humanloop_v2.twa",
+    "sha256_cert_fingerprints": [
+      "CD:B2:D4:07:38:22:6A:9C:98:BB:50:41:FD:5D:E6:79:0A:F2:01:85:09:8B:48:D8:3C:86:B4:35:DA:31:E0:DE"
+    ]
+  }
+}]
