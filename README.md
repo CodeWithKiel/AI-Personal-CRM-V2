@@ -18,7 +18,7 @@ HumanLoop v2 is a multi-user AI personal CRM for remembering the details that ma
 - Backups and dashboard data use parallel, indexed queries.
 - Large contact imports are inserted in transactional batches.
 - Production responses use compression and immutable caching for hashed assets.
-- Docker builds use lockfile-based `npm ci` installs.
+- Hosted builds use lockfile-based `npm ci` installs.
 
 ## Stack
 
@@ -63,6 +63,7 @@ The API automatically creates the configured database and tables at startup. The
 | `MYSQL_PASSWORD` | empty | MySQL password |
 | `MYSQL_DATABASE` | `humanloop` | Database name |
 | `MYSQL_SSL` | `false` | Set to `true` for managed MySQL providers that require TLS |
+| `MYSQL_CA_CERT` | empty | Hosted MySQL CA certificate; paste the full PEM certificate |
 | `GROQ_API_KEY` | empty | Enables live Groq-hosted AI features |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | Groq model used for CRM assistance |
 | `XAI_API_KEY` | empty | Optional xAI Grok provider |
@@ -72,7 +73,52 @@ The API automatically creates the configured database and tables at startup. The
 | `RESEND_API_KEY` | empty | Sends forgot-password emails through Resend |
 | `RESET_FROM_EMAIL` | Resend test sender | Verified sender used for password-reset emails |
 
-## Production
+## Free online deployment
+
+HumanLoop is configured for a free native Node deployment on Render with a free
+Aiven MySQL database. It remains reachable when your laptop is shut down.
+
+Render's free web service sleeps after 15 minutes without traffic and wakes on
+the next request. The first request after sleeping can take about one minute.
+
+### 1. Create the free MySQL database
+
+1. Create an Aiven account and a free MySQL service.
+2. Open the service's **Connection information**.
+3. Keep these values ready: host, port, user, password, and database name.
+4. Download the service CA certificate and open it in a text editor.
+
+### 2. Deploy the web service
+
+[Deploy HumanLoop on Render](https://render.com/deploy?repo=https://github.com/CodeWithKiel/AI-Personal-CRM-V2)
+
+Connect the GitHub repository and enter the requested environment values:
+
+| Render variable | Value |
+| --- | --- |
+| `APP_URL` | Your Render URL, such as `https://humanloop-v2.onrender.com` |
+| `MYSQL_HOST` | Aiven host |
+| `MYSQL_PORT` | Aiven port |
+| `MYSQL_USER` | Aiven user |
+| `MYSQL_PASSWORD` | Aiven password |
+| `MYSQL_DATABASE` | Aiven database name, commonly `defaultdb` |
+| `MYSQL_CA_CERT` | Full contents of the downloaded Aiven CA certificate |
+| `GROQ_API_KEY` | Your Groq API key |
+| `RESEND_API_KEY` | Optional, for password-reset email |
+| `RESET_FROM_EMAIL` | Optional verified Resend sender |
+
+Render automatically generates the session secret, builds the React app, starts
+the Express API, enables HTTPS, and deploys future commits from `main`.
+
+### 3. Verify
+
+Open the Render URL and create an account. The deployment health endpoint is:
+
+```text
+https://your-render-url.onrender.com/api/health
+```
+
+## Self-hosted production
 
 Build the React app:
 
@@ -86,19 +132,8 @@ Set `NODE_ENV=production`, configure the environment variables, and run:
 npm start
 ```
 
-Express serves the compiled React app from `client/dist`. Any host that supports a persistent Node process and managed MySQL works, including Railway, Render, Fly.io, or a VPS.
-
-### Render deployment
-
-1. Push the project to a Git repository.
-2. Create a managed MySQL database and copy its connection values.
-3. In Render, create a Blueprint from the included `render.yaml`.
-4. Enter the requested MySQL and Groq environment variables.
-5. Set `MYSQL_SSL=true` when required by the database provider.
-
-HumanLoop supports separate user accounts. Users create an account with their name, email, and password; Render generates `SESSION_SECRET` automatically from `render.yaml`.
-
-The included `Dockerfile` builds the React frontend and runs the production Express server as one web service. The deployment health check is `/api/health`.
+Express serves the compiled React app from `client/dist`. Any host that supports
+a persistent Node process and managed MySQL can run the app.
 
 ## API overview
 

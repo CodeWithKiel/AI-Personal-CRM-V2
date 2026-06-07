@@ -1,5 +1,12 @@
 # HumanLoop Changelog
 
+## Online Hosting
+
+- Replaced the Docker-based Render deployment with a free native Node web service.
+- Added a one-click Render Blueprint configured for Singapore, automatic deploys, health checks, and generated session secrets.
+- Added secure Aiven MySQL CA-certificate support.
+- Added step-by-step free hosting instructions for Render and Aiven.
+
 ## Startup Fix
 
 - The Express server now serves an existing React production build even when the local `.env` uses development mode.

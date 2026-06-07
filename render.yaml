@@ -1,13 +1,16 @@
 services:
   - type: web
-    name: humanloop
-    runtime: docker
+    name: humanloop-v2
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci && npm --prefix server ci --omit=dev && npm --prefix client ci && npm run build
+    startCommand: npm start
     healthCheckPath: /api/health
+    autoDeployTrigger: commit
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 5000
       - key: APP_URL
         sync: false
       - key: SESSION_SECRET
@@ -17,7 +20,7 @@ services:
       - key: MYSQL_HOST
         sync: false
       - key: MYSQL_PORT
-        value: 3306
+        sync: false
       - key: MYSQL_USER
         sync: false
       - key: MYSQL_PASSWORD
@@ -26,6 +29,8 @@ services:
         sync: false
       - key: MYSQL_SSL
         value: "true"
+      - key: MYSQL_CA_CERT
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL

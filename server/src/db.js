@@ -7,7 +7,10 @@ export async function initializeDatabase() {
   if (!/^[a-zA-Z0-9_]+$/.test(database)) {
     throw new Error("MYSQL_DATABASE may contain only letters, numbers, and underscores.");
   }
-  const ssl = process.env.MYSQL_SSL === "true" ? { rejectUnauthorized: true } : undefined;
+  const ca = process.env.MYSQL_CA_CERT?.replace(/\\n/g, "\n").trim();
+  const ssl = process.env.MYSQL_SSL === "true"
+    ? { rejectUnauthorized: true, ...(ca ? { ca } : {}) }
+    : undefined;
   const connectionOptions = {
     host: process.env.MYSQL_HOST || "localhost",
     port: Number(process.env.MYSQL_PORT || 3306),
